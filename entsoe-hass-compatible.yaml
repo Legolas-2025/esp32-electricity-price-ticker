@@ -1,0 +1,518 @@
+esphome:
+  name: entsoe-hass-compatible
+  friendly_name: Entso-E Prices
+  
+esp32:
+  board: esp32dev
+  framework:
+    type: arduino # Required for HTTPClient
+
+# 1. Wifi & API
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  ap:
+    ssid: "Entsoe-Fallback"
+    password: "fallback_pass"
+
+api:
+  encryption:
+    key: "YOUR_API_ENCRYPTION_KEY_HERE"
+
+ota:
+  - platform: esphome
+
+logger:
+  level: INFO
+
+# -----------------------------------------------------
+# 2. SENSORS (Template Sensors)
+# -----------------------------------------------------
+sensor:
+  # --- 15-MINUTE PRICE SENSORS ---
+  - platform: template
+    name: "Current Electricity Price"
+    id: current_price
+    unit_of_measurement: "€/kWh"
+    accuracy_decimals: 4
+    icon: "mdi:currency-eur"
+    lambda: |-
+      auto now = id(ha_time).now();
+      int local_hour_index = now.hour; 
+      int minute_slot = now.minute / 15; 
+      
+      // OFFSET 0 is correct now that we fetch the correct day
+      const int HOUR_OFFSET = 0; 
+      
+      int final_index = ((local_hour_index + HOUR_OFFSET) * 4) + minute_slot; 
+      
+      if (final_index >= 0 && final_index < id(hourly_prices).size()) {
+        return id(hourly_prices)[final_index];
+      }
+      return {}; 
+      
+  - platform: template
+    name: "Next Electricity Price"
+    id: next_price
+    unit_of_measurement: "€/kWh"
+    accuracy_decimals: 4
+    icon: "mdi:arrow-right-circle"
+    lambda: |-
+      auto now = id(ha_time).now();
+      int local_hour_index = now.hour; 
+      int minute_slot = now.minute / 15; 
+      const int HOUR_OFFSET = 0; 
+      
+      int next_index = ((local_hour_index + HOUR_OFFSET) * 4) + minute_slot + 1; 
+      
+      if (next_index >= 0 && next_index < id(hourly_prices).size()) {
+        return id(hourly_prices)[next_index];
+      }
+      return {}; 
+
+  - platform: template
+    name: "Average Electricity Price Today"
+    id: avg_price
+    unit_of_measurement: "€/kWh"
+    accuracy_decimals: 4
+    icon: "mdi:chart-bell-curve"
+
+  - platform: template
+    name: "Highest Electricity Price Today"
+    id: max_price
+    unit_of_measurement: "€/kWh"
+    accuracy_decimals: 4
+    icon: "mdi:arrow-up-bold"
+
+  - platform: template
+    name: "Lowest Electricity Price Today"
+    id: min_price
+    unit_of_measurement: "€/kWh"
+    accuracy_decimals: 4
+    icon: "mdi:arrow-down-bold"
+
+  # --- HOURLY PRICE SENSORS ---
+  - platform: template
+    name: "Current Hourly Electricity Price"
+    id: current_hourly_price
+    unit_of_measurement: "€/kWh"
+    accuracy_decimals: 4
+    icon: "mdi:chart-line"
+    lambda: |-
+      auto now = id(ha_time).now();
+      int hourly_index = now.hour;
+      
+      if (hourly_index >= 0 && hourly_index < id(hourly_avg_prices_kwh).size()) {
+        return id(hourly_avg_prices_kwh)[hourly_index];
+      }
+      return {}; 
+
+  - platform: template
+    name: "Next Hourly Electricity Price"
+    id: next_hourly_price
+    unit_of_measurement: "€/kWh"
+    accuracy_decimals: 4
+    icon: "mdi:arrow-right-circle-outline"
+    lambda: |-
+      auto now = id(ha_time).now();
+      int hourly_index = now.hour;
+      int next_hourly_index = hourly_index + 1;
+      
+      if (next_hourly_index >= 0 && next_hourly_index < id(hourly_avg_prices_kwh).size()) {
+        return id(hourly_avg_prices_kwh)[next_hourly_index];
+      }
+      return {};
+
+  - platform: template
+    name: "Highest Hourly Electricity Price Today"
+    id: max_hourly_price
+    unit_of_measurement: "€/kWh"
+    accuracy_decimals: 4
+    icon: "mdi:arrow-up-bold-box"
+
+  - platform: template
+    name: "Lowest Hourly Electricity Price Today"
+    id: min_hourly_price
+    unit_of_measurement: "€/kWh"
+    accuracy_decimals: 4
+    icon: "mdi:arrow-down-bold-box"
+
+  # --- HOURLY PERCENTAGE SENSOR ---
+  - platform: template
+    name: "Current Max Hourly Price Percentage"
+    id: current_max_hourly_price_percentage
+    unit_of_measurement: "%"
+    accuracy_decimals: 0
+    icon: "mdi:percent"
+    lambda: |-
+      float current_price = id(current_hourly_price).state;
+      float max_price = id(max_hourly_price).state;
+      
+      if (std::isnan(current_price) || std::isnan(max_price) || max_price <= 0.0) {
+        return {}; 
+      }
+      return (current_price / max_price) * 100.0;
+
+# -----------------------------------------------------
+# 3. TEXT SENSORS
+# -----------------------------------------------------
+text_sensor:
+  # --- NEW: SINGLE HOURLY JSON PRICE VECTOR (24 prices) ---
+  - platform: template
+    name: "ENTSO-E Hourly Prices EUR/kWh JSON"
+    id: json_hourly_prices_kwh
+    icon: "mdi:code-json"
+    
+  # --- TIME SENSORS ---
+  - platform: template
+    name: "Time Of Highest Energy Price Today"
+    id: max_price_time
+    entity_category: "diagnostic"
+    icon: "mdi:clock-time-three"
+    lambda: |-
+      return id(max_price_time_str);
+
+  - platform: template
+    name: "Time Of Lowest Energy Price Today"
+    id: min_price_time
+    entity_category: "diagnostic"
+    icon: "mdi:clock-time-three"
+    lambda: |-
+      return id(min_price_time_str);
+    
+  - platform: template
+    name: "Time Of Highest Hourly Energy Price Today"
+    id: max_hourly_price_time
+    entity_category: "diagnostic"
+    icon: "mdi:clock-time-three"
+    lambda: |-
+      return id(max_hourly_price_time_str);
+
+  - platform: template
+    name: "Time Of Lowest Hourly Energy Price Today"
+    id: min_hourly_price_time
+    entity_category: "diagnostic"
+    icon: "mdi:clock-time-three"
+    lambda: |-
+      return id(min_hourly_price_time_str);
+
+
+# 4. Time Component & Scheduling
+time:
+  - platform: homeassistant
+    id: ha_time 
+    timezone: "YOUR_TIMEZONE_HERE"
+    on_time:
+      # Run sensor updates every 15 minutes
+      - minutes: /15
+        seconds: 1
+        then:
+          - lambda: id(current_price).update();
+          - lambda: id(next_price).update(); 
+          - lambda: id(current_hourly_price).update(); 
+          - lambda: id(next_hourly_price).update(); 
+          - lambda: id(current_max_hourly_price_percentage).update();
+          # Fetch new data early in the morning (02:00)
+          - if:
+              condition:
+                lambda: 'return id(ha_time).now().hour == 2 && id(ha_time).now().minute == 0;'
+              then:
+                - script.execute: full_update_logic_script
+
+# 5. HTTP Request
+http_request:
+  verify_ssl: false
+
+# -----------------------------------------------------
+# 6. GLOBALS (VECTORS & TRACKING STRINGS)
+# -----------------------------------------------------
+globals:
+  # 15-MINUTE PRICE VECTORS (96 elements)
+  - id: hourly_prices
+    type: std::vector<float>
+    initial_value: '{0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0}'
+  - id: hourly_prices_mwh
+    type: std::vector<float>
+    initial_value: '{0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0}'
+  
+  # HOURLY PRICE VECTOR (24 elements)
+  - id: hourly_avg_prices_kwh
+    type: std::vector<float>
+    initial_value: '{0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0}'
+  
+  # PRICE TIME TRACKERS (15-min)
+  - id: min_price_time_str
+    type: std::string
+    initial_value: '"00:00"'
+  - id: max_price_time_str
+    type: std::string
+    initial_value: '"00:00"'
+
+  # PRICE TIME TRACKERS (Hourly)
+  - id: min_hourly_price_time_str
+    type: std::string
+    initial_value: '"00:00"'
+  - id: max_hourly_price_time_str
+    type: std::string
+    initial_value: '"00:00"'
+
+  # API DETAILS
+  - id: api_token
+    type: std::string
+    # !!! PASTE YOUR TOKEN BELOW !!!
+    initial_value: '"YOUR_ENTSOE_API_TOKEN_HERE"' 
+  - id: area_code
+    type: std::string
+    # Country Area Code (See README for full list)
+    initial_value: '"YOUR_COUNTRY_AREA_CODE_HERE"' 
+
+
+# Button now triggers the custom script
+button:
+  - platform: template
+    name: "Entso-E Force Update"
+    id: entsoe_force_update
+    icon: "mdi:refresh-circle"
+    on_press:
+      - script.execute: full_update_logic_script
+
+# -----------------------------------------------------
+# 7. FULL UPDATE LOGIC (SCRIPT) - WITH HARDCODED FEE/VAT
+# -----------------------------------------------------
+script:
+  - id: full_update_logic_script
+    then:
+      - lambda: |-
+          // *****************************************************************
+          // !!! Configuration Section for Taxes and Fees !!!
+          // -----------------------------------------------------------------
+          // The electricity price is calculated as:
+          // Raw_Price * (1 + Provider_Fee_Percentage) * (1 + VAT_Percentage)
+          
+          // 1. Provider Fee Percentage (e.g., 0.12 = 12% fee)
+          // Adjust this value according to your electricity provider's fee/markup.
+          const float PROVIDER_FEE = 0.12; 
+          
+          // 2. VAT Percentage (e.g., 0.22 = 22% VAT)
+          // Adjust this value according to the current governmental VAT rate.
+          const float VAT_RATE = 0.22; 
+          
+          // Calculated Multiplier
+          const float TOTAL_PRICE_MULTIPLIER = (1.0 + PROVIDER_FEE) * (1.0 + VAT_RATE);
+          // *****************************************************************
+
+          // 1. Get Correct Dates for TODAY'S Market Day (Starts Yesterday 23:00)
+          auto time_now = id(ha_time).now();
+          time_t now_ts = time_now.timestamp;
+          
+          // Calculate PeriodStart: Current Timestamp - 24 Hours (86400s)
+          time_t yesterday_ts = now_ts - 86400;
+          struct tm *tm_yesterday = localtime(&yesterday_ts);
+          
+          char date_buf[16];
+          sprintf(date_buf, "%04d%02d%02d2300", tm_yesterday->tm_year + 1900, tm_yesterday->tm_mon + 1, tm_yesterday->tm_mday);
+          std::string periodStart = std::string(date_buf);
+          
+          sprintf(date_buf, "%04d%02d%02d2300", time_now.year, time_now.month, time_now.day_of_month);
+          std::string periodEnd = std::string(date_buf);
+          
+          ESP_LOGD("entsoe", "Fetching Market Day. Requesting: %s to %s", periodStart.c_str(), periodEnd.c_str());
+
+          // 2. Build URL
+          std::string url = "https://web-api.tp.entsoe.eu/api?securityToken=" + id(api_token) + 
+                            "&documentType=A44&in_Domain=" + id(area_code) + 
+                            "&out_Domain=" + id(area_code) + 
+                            "&periodStart=" + periodStart + 
+                            "&periodEnd=" + periodEnd;
+                            
+          ESP_LOGD("entsoe", "Fetching URL: %s", url.c_str());
+
+          // 3. Execute Request
+          HTTPClient http;
+          http.begin(url.c_str());
+          http.setReuse(false);
+          
+          int httpCode = http.GET();
+          
+          if (httpCode > 0) {
+            String payload = http.getString();
+            std::string xml = payload.c_str();
+            
+            // 4. Parse & Calculate
+            std::vector<float> new_prices_kwh(96, 0.0);
+            std::vector<float> new_prices_mwh(96, 0.0);
+            int found_prices_count = 0; 
+            
+            // 15-Minute Trackers
+            float min_p = 9999.0; 
+            float max_p = -9999.0;
+            float sum_p = 0.0;
+            std::string min_time = "00:00";
+            std::string max_time = "00:00";
+
+            // Hourly Trackers
+            std::vector<float> hourly_sums(24, 0.0);
+            std::vector<int> hourly_counts(24, 0); 
+            
+            float min_hourly_p = 9999.0;
+            float max_hourly_p = -9999.0;
+            std::string min_hourly_time = "00:00";
+            std::string max_hourly_time = "00:00";
+
+            std::string point_start_tag = "<Point>";
+            std::string point_end_tag = "</Point>";
+            std::string position_tag = "<position>";
+            std::string price_tag = "<price.amount>";
+            
+            ESP_LOGI("entsoe", "Using Hardcoded Fees: %.2f (%.0f%%), VAT: %.2f (%.0f%%) -> Multiplier: %.4f", PROVIDER_FEE, PROVIDER_FEE*100, VAT_RATE, VAT_RATE*100, TOTAL_PRICE_MULTIPLIER);
+
+            size_t pos = 0;
+            
+            while ((pos = xml.find(point_start_tag, pos)) != std::string::npos) {
+              size_t point_end = xml.find(point_end_tag, pos);
+              if (point_end == std::string::npos) break;
+
+              std::string point_xml = xml.substr(pos, point_end - pos);
+              
+              // --- A. Extract Position (1-96) ---
+              size_t pos_start = point_xml.find(position_tag);
+              size_t pos_end = point_xml.find("</position>");
+              if (pos_start == std::string::npos || pos_end == std::string::npos) {
+                  pos = point_end + point_end_tag.length();
+                  continue;
+              }
+              std::string pos_str = point_xml.substr(pos_start + position_tag.length(), pos_end - (pos_start + position_tag.length()));
+              int position = parse_number<int>(pos_str).value_or(0);
+              int price_index = position - 1; // Array Index (0-95)
+              
+              if (price_index >= 0 && price_index < 96) {
+                  
+                  // --- B. Extract Price (EUR/MWh) ---
+                  size_t price_start = point_xml.find(price_tag);
+                  size_t price_end = point_xml.find("</price.amount>");
+                  
+                  if (price_start != std::string::npos && price_end != std::string::npos) {
+                      std::string val_str = point_xml.substr(price_start + price_tag.length(), price_end - (price_start + price_tag.length()));
+                      float raw_price_per_MWh = parse_number<float>(val_str).value_or(0.0);
+                      
+                      // --- C. Price Conversion and Taxes ---
+                      float final_price_per_MWh = raw_price_per_MWh * TOTAL_PRICE_MULTIPLIER;
+                      float final_price_per_kWh = final_price_per_MWh / 1000.0; 
+
+                      new_prices_kwh[price_index] = final_price_per_kWh;
+                      new_prices_mwh[price_index] = final_price_per_MWh;
+                      sum_p += final_price_per_kWh;
+                      found_prices_count++; 
+                      
+                      // --- D. Calculate Local Time (Based on Position/Index) ---
+                      int hour_of_day = price_index / 4;
+                      int minute_of_hour = (price_index % 4) * 15;
+                      
+                      char time_buf[6];
+                      sprintf(time_buf, "%02d:%02d", hour_of_day, minute_of_hour);
+                      std::string time_hhmm = std::string(time_buf);
+                      
+                      // E. Min/Max Tracking
+                      if(final_price_per_kWh < min_p) {
+                          min_p = final_price_per_kWh;
+                          min_time = time_hhmm;
+                      }
+                      if(final_price_per_kWh > max_p) {
+                          max_p = final_price_per_kWh;
+                          max_time = time_hhmm;
+                      }
+
+                      // F. Hourly Summation
+                      if (hour_of_day < 24) { 
+                          hourly_sums[hour_of_day] += final_price_per_kWh;
+                          hourly_counts[hour_of_day]++;
+                      }
+                  } 
+              }
+
+              pos = point_end + point_end_tag.length();
+            } 
+
+            // 5. Calculate Hourly Averages
+            std::vector<float> new_hourly_avg_prices_kwh;
+            
+            for (int i = 0; i < 24; i++) {
+                float avg_price = 0.0;
+                
+                if (hourly_counts[i] > 0) {
+                    avg_price = hourly_sums[i] / hourly_counts[i];
+                }
+
+                new_hourly_avg_prices_kwh.push_back(avg_price);
+                    
+                // Hourly Min/Max Tracking
+                if (hourly_counts[i] > 0) {
+                    if (avg_price < min_hourly_p) {
+                        min_hourly_p = avg_price;
+                        char h_buf[6];
+                        sprintf(h_buf, "%02d:00", i); 
+                        min_hourly_time = std::string(h_buf);
+                    }
+                    if (avg_price > max_hourly_p) {
+                        max_hourly_p = avg_price;
+                        char h_buf[6];
+                        sprintf(h_buf, "%02d:00", i);
+                        max_hourly_time = std::string(h_buf);
+                    }
+                }
+            }
+
+            // 6. Final Update Check and Global Assignment
+            if (found_prices_count >= 90) { 
+              // 15-Minute Updates 
+              id(hourly_prices) = new_prices_kwh;
+              id(hourly_prices_mwh) = new_prices_mwh;
+              
+              id(min_price).publish_state(min_p);
+              id(max_price).publish_state(max_p);
+              id(avg_price).publish_state(sum_p / found_prices_count);
+              
+              id(min_price_time_str) = min_time;
+              id(max_price_time_str) = max_time;
+
+              // Hourly Updates 
+              id(hourly_avg_prices_kwh) = new_hourly_avg_prices_kwh;
+              
+              id(min_hourly_price).publish_state(min_hourly_p);
+              id(max_hourly_price).publish_state(max_hourly_p);
+              
+              id(min_hourly_price_time_str) = min_hourly_time;
+              id(max_hourly_price_time_str) = max_hourly_time;
+              
+              // Hourly JSON String Generation
+              std::string json_hourly_prices = "[";
+              
+              for(size_t i=0; i<new_hourly_avg_prices_kwh.size(); i++) {
+                char p_buf[8];
+                sprintf(p_buf, "%.4f", new_hourly_avg_prices_kwh[i]); 
+                std::string val_str = std::string(p_buf);
+
+                json_hourly_prices += val_str;
+                if(i < new_hourly_avg_prices_kwh.size() - 1) json_hourly_prices += ",";
+              }
+              json_hourly_prices += "]";
+              
+              ESP_LOGI("entsoe", "Publishing Hourly JSON (24 points), Length: %d", json_hourly_prices.length());
+              id(json_hourly_prices_kwh).publish_state(json_hourly_prices.c_str());
+              
+              
+              ESP_LOGI("entsoe", "Successfully updated all prices and statistics. Found %d prices.", found_prices_count);
+              
+              // Trigger template sensor updates
+              id(max_price_time).update();
+              id(min_price_time).update();
+              id(current_hourly_price).update();
+              id(current_max_hourly_price_percentage).update();
+              
+            } else {
+              ESP_LOGW("entsoe", "Failed to parse prices. Found only %d points. Data considered invalid.", found_prices_count);
+            }
+          } else {
+            ESP_LOGW("entsoe", "HTTP Request failed. Code: %d", httpCode);
+          }
+          http.end();
