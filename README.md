@@ -631,7 +631,7 @@ For commercial implementations or custom modifications, consider:
 - **Last Updated**: December 2025
 - **Compatibility**: ESP Home 2024.1+, Home Assistant 2023.1+
 - **License**: MIT
-- **Author**: MiniMax Agent
+- **Author**: Legolas-2025 with AI assistance (MiniMax Agent and Google Gemini)
 
 ---
 
