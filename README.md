@@ -10,7 +10,7 @@
 [![GitHub issues](https://img.shields.io/github/issues/YOUR_USERNAME/esp32-electricity-price-ticker)](https://github.com/YOUR_USERNAME/esp32-electricity-price-ticker/issues)
 [![GitHub pull requests](https://img.shields.io/github/issues-pr/YOUR_USERNAME/esp32-electricity-price-ticker)](https://github.com/YOUR_USERNAME/esp32-electricity-price-ticker/pulls)
 
-A complete ESP32-based solution that fetches real-time electricity prices from the ENTSO-E API and provides comprehensive price sensors for Home Assistant automation. Perfect for optimizing electricity costs and smart home energy management across 35+ European countries. Inspired by https://github.com/JaccoR/hass-entso-e, modified to hardware version.
+A complete ESP32-based solution that fetches real-time electricity prices from the ENTSO-E API (https://transparency.entsoe.eu/) and provides comprehensive price sensors for Home Assistant automation. Perfect for optimizing electricity costs and smart home energy management across 35+ European countries. Inspired by hass-entso-e project (https://github.com/JaccoR/hass-entso-e), modified to hardware version.
 
 ## 🎯 Quick Start
 
