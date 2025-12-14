@@ -1,4 +1,5 @@
 # ESP32 Electricity Price Ticker for Home Assistant
+![ESP32 Electricity Price Ticker](header.png)
 
 [![ESP32](https://img.shields.io/badge/ESP32-Ready-blue)](https://www.espressif.com/en/products/devkits)
 [![Home Assistant](https://img.shields.io/badge/Home%20Assistant-Compatible-green)](https://www.home-assistant.io/)
