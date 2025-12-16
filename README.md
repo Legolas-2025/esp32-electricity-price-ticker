@@ -277,7 +277,7 @@ const float VAT_RATE = 0.22;
 
 The default update schedule is:
 - **Every 15 minutes**: Sensor value updates
-- **2:00 AM daily**: New market data fetch
+- **0:00 AM and 2:00 AM (as a fallback) daily**: New market data fetch
 
 To modify timing, edit the time section:
 
@@ -296,7 +296,7 @@ time:
       # Fetch new data at 3:00 AM instead of 2:00
       - if:
           condition:
-            lambda: 'return id(ha_time).now().hour == 3 && id(ha_time).now().minute == 0;'
+            lambda: 'return (id(ha_time).now().hour == 0 && id(ha_time).now().minute == 0) || (id(ha_time).now().hour == 3 && id(ha_time).now().minute == 0);'
           then:
             - script.execute: full_update_logic_script
 ```
