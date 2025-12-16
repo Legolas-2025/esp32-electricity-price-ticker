@@ -212,10 +212,11 @@ time:
           - lambda: id(current_hourly_price).update(); 
           - lambda: id(next_hourly_price).update(); 
           - lambda: id(current_max_hourly_price_percentage).update();
-          # Fetch new data early in the morning (02:00)
+          # Fetch new data early in the morning (00:00 and 02:00 as a fallback fetch)
           - if:
               condition:
-                lambda: 'return id(ha_time).now().hour == 2 && id(ha_time).now().minute == 0;'
+                # Execute IF the current time is 00:00:01 (primary fetch) OR 02:00:01 (fallback fetch)
+                lambda: 'return (id(ha_time).now().hour == 0 && id(ha_time).now().minute == 0) || (id(ha_time).now().hour == 2 && id(ha_time).now().minute == 0);'
               then:
                 - script.execute: full_update_logic_script
 
