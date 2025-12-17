@@ -1,0 +1,376 @@
+# Home Assistant Automations for ESP32 Electricity Price Ticker v2.0.0
+# Copy and paste these automations into your Home Assistant configuration
+
+# =============================================================================
+# CRITICAL FAILURE ALERT
+# =============================================================================
+# This automation triggers when all 3 retry attempts fail
+# It sends a critical notification alerting you to check the system
+
+- id: "electricity_price_update_critical_failure"
+  alias: "Electricity Price Update Critical Failure"
+  description: "Alert when all 3 price update attempts fail"
+  trigger:
+    - platform: state
+      entity_id: sensor.price_update_status
+      to: "FAILED"
+  condition:
+    - condition: template
+      value_template: "{{ states('sensor.price_update_retry_count') | int >= 3 }}"
+  action:
+    - service: notify.persistent_notification
+      data:
+        title: "⚠️ Electricity Price Update Failed"
+        message: |
+          🚨 CRITICAL: Electricity price updates have failed after 3 attempts.
+          
+          📊 System Status:
+          • Last Update: {{ states('sensor.last_price_update_time') }}
+          • Current Status: {{ states('sensor.price_update_status_message') }}
+          • Retry Count: {{ states('sensor.price_update_retry_count') }}/3
+          
+          🔧 Recommended Actions:
+          • Check ESP32 device connectivity
+          • Verify ENTSO-E API availability
+          • Review Home Assistant integration
+          • Check network connectivity
+          
+          ⚡ Manual intervention may be required for price data updates.
+    # Optional: Add your preferred notification methods below
+    # - service: notify.mobile_app_your_phone
+    #   data:
+    #     title: "⚠️ Price Update Failed"
+    #     message: "Electricity price updates failed after 3 attempts. Check Home Assistant for details."
+    # - service: telegram_bot.send_message
+    #   data:
+    #     message: "🚨 CRITICAL: Electricity price updates failed after 3 attempts. System requires attention."
+
+# =============================================================================
+# RETRY ATTEMPT NOTIFICATION
+# =============================================================================
+# This automation notifies when retry attempts are in progress
+# Keeps you informed about the smart retry process
+
+- id: "electricity_price_update_retry_attempt"
+  alias: "Electricity Price Update Retry Attempt"
+  description: "Notify when price update retry is in progress"
+  trigger:
+    - platform: state
+      entity_id: sensor.price_retry_count
+  condition:
+    - condition: template
+      value_template: "{{ trigger.to_state.state | int >= 2 and trigger.to_state.state | int <= 3 }}"
+  action:
+    - service: notify.persistent_notification
+      data:
+        title: "🔄 Electricity Price Update Retry"
+        message: |
+          📈 Update Progress:
+          • Attempt: {{ states('sensor.price_retry_count') }}/3
+          • Status: {{ states('sensor.price_status_message') }}
+          
+          ⏳ The system is automatically retrying the price update.
+          You will be notified of the final result.
+
+# =============================================================================
+# SUCCESS NOTIFICATION
+# =============================================================================
+# This automation notifies when updates succeed (especially after retries)
+# Useful for confirming system recovery
+
+- id: "electricity_price_update_success"
+  alias: "Electricity Price Update Success"
+  description: "Notify when price update succeeds after retries"
+  trigger:
+    - platform: state
+      entity_id: sensor.price_update_status
+      to: "SUCCESS"
+  condition:
+    - condition: template
+      value_template: "{{ trigger.from_state.state == 'FAILED' }}"
+  action:
+    - service: notify.persistent_notification
+      data:
+        title: "✅ Electricity Price Updated Successfully"
+        message: |
+          🎉 Price Update Successful!
+          • Final Attempt: {{ states('sensor.price_retry_count') }} attempts
+          • Update Time: {{ states('sensor.last_price_update_time') }}
+          • Status: {{ states('sensor.price_status_message') }}
+          
+          ⚡ Price data is now current and ready for automations.
+
+# =============================================================================
+# DAILY STATUS SUMMARY
+# =============================================================================
+# This automation provides a daily summary of update status
+# Runs at 6 AM every day
+
+- id: "electricity_price_daily_status"
+  alias: "Electricity Price Daily Status Summary"
+  description: "Daily summary of price update status"
+  trigger:
+    - platform: time
+      at: "06:00:00"
+  action:
+    - service: notify.persistent_notification
+      data:
+        title: "📊 Daily Electricity Price Status Summary"
+        message: |
+          📈 Yesterday's Performance:
+          • Final Status: {{ states('sensor.price_update_status') }}
+          • Total Attempts: {{ states('sensor.price_retry_count') }}
+          • Last Update: {{ states('sensor.last_price_update_time') }}
+          • System Health: {{ '✅ Good' if states('sensor.price_update_status') == 'SUCCESS' else '⚠️ Issues Detected' }}
+          
+          📊 Current Price Data:
+          • Current Price: {{ states('sensor.current_electricity_price') }} €/kWh
+          • Today's Average: {{ states('sensor.average_electricity_price_today') }} €/kWh
+          • Price Range: {{ states('sensor.lowest_electricity_price_today') }} - {{ states('sensor.highest_electricity_price_today') }} €/kWh
+
+# =============================================================================
+# API VERIFICATION AUTOMATION
+# =============================================================================
+# This automation verifies price update status by calling the ESPHome API action
+# Runs 5 minutes after midnight as a verification check
+
+- id: "electricity_price_api_verification"
+  alias: "ESPHome Price Update API Verification"
+  description: "Verify price update status via ESPHome API action"
+  trigger:
+    - platform: time
+      at: "00:05:00"
+  action:
+    - service: esphome.entsoe_hass_compatible_verify_price_update
+      data: {}
+    - delay: 10
+    - service: notify.persistent_notification
+      data:
+        title: "🔍 Price Update API Verification"
+        message: |
+          🔍 API Verification Results:
+          • Response received from ESPHome device
+          • Current Price: {{ states('sensor.current_electricity_price') }} €/kWh
+          • Update Status: {{ states('sensor.price_update_status') }}
+          • Last Update: {{ states('sensor.last_price_update_time') }}
+          
+          ✅ API communication verified.
+
+# =============================================================================
+# SYSTEM HEALTH CHECK
+# =============================================================================
+# This automation monitors system health and alerts on anomalies
+# Runs every hour to check for stuck states
+
+- id: "electricity_price_system_health"
+  alias: "Electricity Price System Health Check"
+  description: "Monitor system health and detect anomalies"
+  trigger:
+    - platform: time
+      minutes: 0
+  condition:
+    - condition: time
+      after: "08:00:00"
+      before: "22:00:00"
+  action:
+    - condition: template
+      value_template: |
+        {% set last_update = states('sensor.last_price_update_time') %}
+        {% if last_update == 'Never' %}
+          true
+        {% else %}
+          {% set last_update_time = strptime(last_update, '%Y-%m-%d %H:%M:%S') %}
+          {% set hours_old = (now() - last_update_time).total_seconds() / 3600 %}
+          {{ hours_old > 6 }}
+        {% endif %}
+  action:
+    - service: notify.persistent_notification
+      data:
+        title: "⚠️ Electricity Price System Health Warning"
+        message: |
+          🏥 System Health Alert:
+          • Last Update: {{ states('sensor.last_price_update_time') }}
+          • Current Status: {{ states('sensor.price_update_status') }}
+          • Data Age: {{ states('sensor.last_price_update_time') if states('sensor.last_price_update_time') != 'Never' else 'Never' }}
+          
+          🔧 Recommended Actions:
+          • Check ESP32 device status
+          • Verify WiFi connectivity
+          • Review ENTSO-E API status
+          • Consider manual force update
+
+# =============================================================================
+# PRICE ANOMALY DETECTION
+# =============================================================================
+# This automation detects unusual price patterns that might indicate issues
+# Runs when prices change significantly
+
+- id: "electricity_price_anomaly_detection"
+  alias: "Electricity Price Anomaly Detection"
+  description: "Detect unusual price patterns that might indicate system issues"
+  trigger:
+    - platform: numeric_state
+      entity_id: sensor.current_electricity_price
+  condition:
+    - condition: template
+      value_template: |
+        {% set current_price = states('sensor.current_electricity_price') | float %}
+        {% set avg_price = states('sensor.average_electricity_price_today') | float %}
+        {% set price_ratio = current_price / avg_price if avg_price > 0 else 0 %}
+        {{ price_ratio > 5 or price_ratio < 0.1 }}
+  action:
+    - service: notify.persistent_notification
+      data:
+        title: "🤔 Electricity Price Anomaly Detected"
+        message: |
+          🔍 Anomaly Detected:
+          • Current Price: {{ states('sensor.current_electricity_price') }} €/kWh
+          • Today's Average: {{ states('sensor.average_electricity_price_today') }} €/kWh
+          • Price Ratio: {{ '%.1f' % (states('sensor.current_electricity_price') | float / states('sensor.average_electricity_price_today') | float) }}x average
+          
+          ⚠️ This price is significantly different from today's average.
+          Please verify if this is correct market data or a system issue.
+
+# =============================================================================
+# MANUAL UPDATE REMINDER
+# =============================================================================
+# This automation reminds you to perform manual updates if needed
+# Triggers when status shows failure for an extended period
+
+- id: "electricity_price_manual_update_reminder"
+  alias: "Manual Update Reminder"
+  description: "Remind to manually trigger update if automatic updates fail"
+  trigger:
+    - platform: state
+      entity_id: sensor.price_update_status
+      to: "FAILED"
+  for:
+    minutes: 30
+  action:
+    - service: notify.persistent_notification
+      data:
+        title: "🔧 Manual Update Recommended"
+        message: |
+          ⏰ Extended Failure Detected:
+          • Status has been FAILED for 30+ minutes
+          • Total Attempts: {{ states('sensor.price_retry_count') }}/3
+          • Last Update: {{ states('sensor.last_price_update_time') }}
+          
+          💡 Recommended Actions:
+          • Click "Entso-E Force Update" button in Home Assistant
+          • Check ESP32 device connectivity
+          • Review system logs
+          
+          🔄 A manual update may resolve connectivity issues.
+
+# =============================================================================
+# USAGE STATISTICS
+# =============================================================================
+# This automation tracks and reports system usage statistics
+# Runs weekly on Sundays
+
+- id: "electricity_price_weekly_stats"
+  alias: "Electricity Price Weekly Statistics"
+  description: "Generate weekly statistics report"
+  trigger:
+    - platform: time
+      at: "09:00:00"
+    - platform: time
+      weekday:
+        - sun
+  action:
+    - service: notify.persistent_notification
+      data:
+        title: "📈 Weekly Electricity Price Statistics"
+        message: |
+          📊 This Week's Summary:
+          • System Status: {{ states('sensor.price_update_status') }}
+          • Current Price: {{ states('sensor.current_electricity_price') }} €/kWh
+          • Week's Average: {{ states('sensor.average_electricity_price_today') }} €/kWh
+          • Price Range: {{ states('sensor.lowest_electricity_price_today') }} - {{ states('sensor.highest_electricity_price_today') }} €/kWh
+          
+          🎯 Smart Retry Performance:
+          • Last Retry Count: {{ states('sensor.price_retry_count') }}
+          • Update Success Rate: {{ '100%' if states('sensor.price_update_status') == 'SUCCESS' else 'Needs Attention' }}
+          
+          ⚡ System is optimized for reliable electricity price monitoring.
+
+# =============================================================================
+# DASHBOARD REFRESH
+# =============================================================================
+# This automation refreshes relevant dashboard elements
+# Runs when important sensors update
+
+- id: "electricity_price_dashboard_refresh"
+  alias: "Dashboard Elements Refresh"
+  description: "Refresh dashboard elements when important sensors update"
+  trigger:
+    - platform: state
+      entity_id: sensor.price_update_status
+    - platform: state
+      entity_id: sensor.current_electricity_price
+  action:
+    - service: homeassistant.turn_on
+      entity_id: input_boolean.dashboard_refresh
+    - delay: 5
+    - service: homeassistant.turn_off
+      entity_id: input_boolean.dashboard_refresh
+
+# =============================================================================
+# SENSOR VALIDATION
+# =============================================================================
+# This automation validates that all sensors are reporting properly
+# Runs daily to ensure system integrity
+
+- id: "electricity_price_sensor_validation"
+  alias: "Electricity Price Sensor Validation"
+  description: "Validate that all sensors are reporting properly"
+  trigger:
+    - platform: time
+      at: "10:00:00"
+  action:
+    - condition: template
+      value_template: |
+        {% set sensors_to_check = [
+          'sensor.current_electricity_price',
+          'sensor.average_electricity_price_today',
+          'sensor.price_update_status',
+          'sensor.last_price_update_time'
+        ] %}
+        {% for sensor in sensors_to_check %}
+          {% if states(sensor) in ['unknown', 'unavailable', 'None'] %}
+            true
+          {% endif %}
+        {% endfor %}
+    - service: notify.persistent_notification
+      data:
+        title: "🔍 Sensor Validation Warning"
+        message: |
+          ⚠️ Some sensors may not be reporting properly:
+          
+          🔧 Check the following sensors:
+          • Current Electricity Price: {{ states('sensor.current_electricity_price') }}
+          • Average Electricity Price: {{ states('sensor.average_electricity_price_today') }}
+          • Update Status: {{ states('sensor.price_update_status') }}
+          • Last Update Time: {{ states('sensor.last_price_update_time') }}
+          
+          💡 Recommended Actions:
+          • Restart ESP32 device
+          • Check Home Assistant integration
+          • Verify ESPHome configuration
+
+# =============================================================================
+# END OF AUTOMATIONS
+# =============================================================================
+
+# Notes:
+# 1. Copy and paste these automations into your Home Assistant automations.yaml file
+# 2. Uncomment and modify notification services as needed (mobile_app, telegram, etc.)
+# 3. Test each automation individually after adding them
+# 4. Adjust timing and conditions based on your preferences
+# 5. Some automations may require additional Home Assistant integrations (mobile app, telegram, etc.)
+#
+# For more advanced users, consider:
+# - Adding these to a separate file (e.g., price_automations.yaml) and including it in configuration.yaml
+# - Using the UI automation editor to modify these automations
+# - Creating custom notifications with more sophisticated formatting
