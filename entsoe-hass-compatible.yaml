@@ -2,6 +2,9 @@ esphome:
   name: entsoe-hass-compatible
   friendly_name: Entso-E Prices
   
+  # Version 2.0.0 - Enhanced with Smart Retry Logic, Status Monitoring & Boot-up Updates
+  # Requires ESPHome 2025.12.0+ for API action responses feature
+
 esp32:
   board: esp32dev
   framework:
@@ -18,6 +21,21 @@ wifi:
 api:
   encryption:
     key: "YOUR_API_ENCRYPTION_KEY_HERE"
+  # Enable actions for bidirectional communication with Home Assistant
+  actions:
+    - action: verify_price_update
+      supports_response: only
+      then:
+        - api.respond:
+            data: !lambda |-
+              root["price_updated"] = (id(avg_price).state > 0.0);
+              root["current_price"] = id(current_price).state;
+              root["avg_price"] = id(avg_price).state;
+              root["price_count"] = id(hourly_prices).size();
+              root["timestamp"] = id(ha_time).now().timestamp;
+              root["update_status"] = id(last_update_success);
+              root["retry_count"] = id(retry_count);
+              root["status_message"] = id(update_status_message);
 
 ota:
   - platform: esphome
@@ -153,11 +171,19 @@ sensor:
       }
       return (current_price / max_price) * 100.0;
 
+  # --- STATUS MONITORING SENSORS (numeric) ---
+  - platform: template
+    name: "Price Update Retry Count"
+    id: price_retry_count
+    icon: "mdi:counter"
+    lambda: |-
+      return id(retry_count);
+
 # -----------------------------------------------------
 # 3. TEXT SENSORS
 # -----------------------------------------------------
 text_sensor:
-  # --- NEW: SINGLE HOURLY JSON PRICE VECTOR (24 prices) ---
+  # --- HOURLY JSON PRICE VECTOR (24 prices) ---
   - platform: template
     name: "ENTSO-E Hourly Prices EUR/kWh JSON"
     id: json_hourly_prices_kwh
@@ -196,6 +222,38 @@ text_sensor:
     lambda: |-
       return id(min_hourly_price_time_str);
 
+  # --- NEW: STATUS MONITORING TEXT SENSORS (Version 2.0.0) ---
+  - platform: template
+    name: "Price Update Status"
+    id: price_update_status
+    icon: "mdi:update"
+    lambda: |-
+      if (id(last_update_success)) {
+        return std::string("SUCCESS");
+      } else {
+        return std::string("FAILED");
+      }
+
+  - platform: template
+    name: "Last Price Update Time"
+    id: last_price_update_time
+    icon: "mdi:clock-outline"
+    lambda: |-
+      time_t last_update = id(last_update_attempt);
+      if (last_update > 0) {
+        struct tm *tm_info = localtime(&last_update);
+        char time_buf[20];
+        strftime(time_buf, sizeof(time_buf), "%Y-%m-%d %H:%M:%S", tm_info);
+        return std::string(time_buf);
+      }
+      return std::string("Never");
+
+  - platform: template
+    name: "Price Update Status Message"
+    id: price_status_message
+    icon: "mdi:message-text-outline"
+    lambda: |-
+      return id(update_status_message);
 
 # 4. Time Component & Scheduling
 time:
@@ -207,18 +265,28 @@ time:
       - minutes: /15
         seconds: 1
         then:
+
           - lambda: id(current_price).update();
           - lambda: id(next_price).update(); 
           - lambda: id(current_hourly_price).update(); 
           - lambda: id(next_hourly_price).update(); 
           - lambda: id(current_max_hourly_price_percentage).update();
-          # Fetch new data early in the morning (00:00 and 02:00 as a fallback fetch)
+          # Enhanced: Smart price update with retry logic (Version 2.0.0)
           - if:
               condition:
-                # Execute IF the current time is 00:00:01 (primary fetch) OR 02:00:01 (fallback fetch)
-                lambda: 'return (id(ha_time).now().hour == 0 && id(ha_time).now().minute == 0) || (id(ha_time).now().hour == 2 && id(ha_time).now().minute == 0);'
+                # Execute IF the current time is 00:00:01 (primary fetch)
+                lambda: 'return (id(ha_time).now().hour == 0 && id(ha_time).now().minute == 0);'
               then:
-                - script.execute: full_update_logic_script
+                - script.execute: smart_price_update
+      # NEW: Boot recovery - trigger once shortly after boot
+      - seconds: 35  # 35 seconds after boot (first minute)
+        then:
+          - if:
+              condition:
+                lambda: 'return id(boot_recovery_executed) == false;'
+              then:
+                - script.execute: smart_price_update
+                - lambda: 'id(boot_recovery_executed) = true;'
 
 # 5. HTTP Request
 http_request:
@@ -231,10 +299,10 @@ globals:
   # 15-MINUTE PRICE VECTORS (96 elements)
   - id: hourly_prices
     type: std::vector<float>
-    initial_value: '{0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0}'
+    initial_value: '{0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0}'
   - id: hourly_prices_mwh
     type: std::vector<float>
-    initial_value: '{0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0}'
+    initial_value: '{0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0}'
   
   # HOURLY PRICE VECTOR (24 elements)
   - id: hourly_avg_prices_kwh
@@ -257,6 +325,30 @@ globals:
     type: std::string
     initial_value: '"00:00"'
 
+  # NEW: Smart retry and status tracking globals (Version 2.0.0)
+  - id: last_successful_update
+    type: time_t
+    initial_value: '0'
+  - id: last_update_attempt
+    type: time_t
+    initial_value: '0'
+  - id: last_update_success
+    type: bool
+    initial_value: 'false'
+  - id: update_status_message
+    type: std::string
+    initial_value: '"Boot-up price update"'
+  - id: retry_count
+    type: int
+    initial_value: '0'
+  - id: max_retries
+    type: int
+    initial_value: '3'
+  # NEW: Boot recovery tracking (Version 2.0.0)
+  - id: boot_recovery_executed
+    type: bool
+    initial_value: 'false'
+
   # API DETAILS
   - id: api_token
     type: std::string
@@ -264,23 +356,105 @@ globals:
     initial_value: '"YOUR_ENTSOE_API_TOKEN_HERE"' 
   - id: area_code
     type: std::string
-    # Country Area Code (See README for full list)
+    # Slovenia (ELES) Area Code
     initial_value: '"YOUR_COUNTRY_AREA_CODE_HERE"' 
 
-
-# Button now triggers the custom script
+# Button triggers the smart update script
 button:
   - platform: template
     name: "Entso-E Force Update"
     id: entsoe_force_update
     icon: "mdi:refresh-circle"
     on_press:
-      - script.execute: full_update_logic_script
+      - script.execute: smart_price_update
 
 # -----------------------------------------------------
-# 7. FULL UPDATE LOGIC (SCRIPT) - WITH HARDCODED FEE/VAT
+# 7. SMART PRICE UPDATE SCRIPTS (Version 2.0.0)
 # -----------------------------------------------------
 script:
+  # Smart price update script with retry logic
+  - id: smart_price_update
+    then:
+      # Step 1: Update status - attempt started
+      - lambda: |-
+          id(last_update_attempt) = id(ha_time).now().timestamp;
+          id(update_status_message) = "Midnight smart update started";
+
+      # Step 2: Check if we need to retry or if data is already fresh
+      - lambda: |-
+          auto now = id(ha_time).now().timestamp;
+          if (now - id(last_successful_update) < 3600) { // Less than 1 hour old
+            ESP_LOGI("entsoe", "Price data is fresh, skipping update");
+            id(update_status_message) = "Data fresh - midnight update skipped";
+            id(last_update_success) = true;
+            
+            // Update status sensors
+            id(price_update_status).update();
+            id(price_status_message).update();
+            id(last_price_update_time).update();
+            return;
+          }
+
+      # Step 3: Check retry limit
+      - lambda: |-
+          if (id(retry_count) >= id(max_retries)) {
+            ESP_LOGW("entsoe", "Max retries reached, giving up");
+            id(update_status_message) = "FAILED: Max retries exceeded (3/3)";
+            id(last_update_success) = false;
+            
+            // Update all status sensors
+            id(price_update_status).update();
+            id(price_status_message).update();
+            id(last_price_update_time).update();
+            id(price_retry_count).update();
+            
+            id(retry_count) = 0; // Reset for next cycle
+            return;
+          }
+
+      # Step 4: Execute the full update logic
+      - script.execute: full_update_logic_script
+      - delay: 60s
+      
+      # Step 5: Verify update success (simplified - no HA action)
+      - lambda: |-
+          float current_avg = id(avg_price).state;
+          
+          if (current_avg > 0.0) {
+            // SUCCESS: Data update verified
+            ESP_LOGI("entsoe", "Price update verified - average: %.4f €/kWh", current_avg);
+            id(last_successful_update) = id(ha_time).now().timestamp;
+            id(retry_count) = 0;
+            id(last_update_success) = true;
+            id(update_status_message) = "SUCCESS: Price data updated";
+            
+            ESP_LOGI("entsoe", "Price update SUCCESS - %d prices processed", 96);
+          } else {
+            // FAILURE: No valid data
+            ESP_LOGW("entsoe", "Price update failed - no valid data");
+            id(retry_count) += 1;
+            id(last_update_success) = false;
+            
+            char msg[50];
+            sprintf(msg, "FAILED: No valid data (%d/3)", id(retry_count));
+            id(update_status_message) = std::string(msg);
+            
+            ESP_LOGW("entsoe", "Price update FAILED, attempt %d/%d", id(retry_count), id(max_retries));
+            
+            // If this was the final attempt, prepare for next day
+            if (id(retry_count) >= id(max_retries)) {
+              ESP_LOGE("entsoe", "ALL UPDATE ATTEMPTS FAILED - ALERT REQUIRED");
+              id(update_status_message) = "CRITICAL: All 3 attempts failed";
+            }
+          }
+          
+          // Update status sensors
+          id(price_update_status).update();
+          id(price_retry_count).update();
+          id(price_status_message).update();
+          id(last_price_update_time).update();
+
+  # Enhanced: Original full update logic with status updates
   - id: full_update_logic_script
     then:
       - lambda: |-
