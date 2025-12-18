@@ -1,4 +1,4 @@
-# ⚡ ESP32 Electricity Price Ticker for Home Assistant
+# ⚡ ESP32 Electricity Price Ticker for HA (Entso-E API)
 ![ESP32 Electricity Price Ticker](header.png)
 
 [![ESP32](https://img.shields.io/badge/ESP32-Ready-blue)](https://www.espressif.com/en/products/devkits)
