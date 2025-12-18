@@ -1,0 +1,265 @@
+# FILE: /config/templates/hourly_prices.yaml
+
+- sensor:
+    - unique_id: entso_e_price_h00
+      name: 'Electricity Price Hour 00:00'
+      unit_of_measurement: "€/kWh"
+      icon: mdi:currency-eur
+      state: >
+        {% set json_string = states('sensor.entso_e_prices_entso_e_hourly_prices_eur_kwh_json') %}
+        {% set prices = json_string | from_json(default=[]) %}
+        {% set price = prices[0] if prices is iterable and prices | length > 0 and 0 < prices | length else 'unknown' %}
+        {{ price | float('unknown') | round(5) }}
+
+- sensor:
+    - unique_id: entso_e_price_h01
+      name: 'Electricity Price Hour 01:00'
+      unit_of_measurement: "€/kWh"
+      icon: mdi:currency-eur
+      state: >
+        {% set json_string = states('sensor.entso_e_prices_entso_e_hourly_prices_eur_kwh_json') %}
+        {% set prices = json_string | from_json(default=[]) %}
+        {% set price = prices[1] if prices is iterable and prices | length > 1 and 1 < prices | length else 'unknown' %}
+        {{ price | float('unknown') | round(5) }}
+
+- sensor:
+    - unique_id: entso_e_price_h02
+      name: 'Electricity Price Hour 02:00'
+      unit_of_measurement: "€/kWh"
+      icon: mdi:currency-eur
+      state: >
+        {% set json_string = states('sensor.entso_e_prices_entso_e_hourly_prices_eur_kwh_json') %}
+        {% set prices = json_string | from_json(default=[]) %}
+        {% set price = prices[2] if prices is iterable and prices | length > 2 and 2 < prices | length else 'unknown' %}
+        {{ price | float('unknown') | round(5) }}
+
+- sensor:
+    - unique_id: entso_e_price_h03
+      name: 'Electricity Price Hour 03:00'
+      unit_of_measurement: "€/kWh"
+      icon: mdi:currency-eur
+      state: >
+        {% set json_string = states('sensor.entso_e_prices_entso_e_hourly_prices_eur_kwh_json') %}
+        {% set prices = json_string | from_json(default=[]) %}
+        {% set price = prices[3] if prices is iterable and prices | length > 3 and 3 < prices | length else 'unknown' %}
+        {{ price | float('unknown') | round(5) }}
+
+- sensor:
+    - unique_id: entso_e_price_h04
+      name: 'Electricity Price Hour 04:00'
+      unit_of_measurement: "€/kWh"
+      icon: mdi:currency-eur
+      state: >
+        {% set json_string = states('sensor.entso_e_prices_entso_e_hourly_prices_eur_kwh_json') %}
+        {% set prices = json_string | from_json(default=[]) %}
+        {% set price = prices[4] if prices is iterable and prices | length > 4 and 4 < prices | length else 'unknown' %}
+        {{ price | float('unknown') | round(5) }}
+
+- sensor:
+    - unique_id: entso_e_price_h05
+      name: 'Electricity Price Hour 05:00'
+      unit_of_measurement: "€/kWh"
+      icon: mdi:currency-eur
+      state: >
+        {% set json_string = states('sensor.entso_e_prices_entso_e_hourly_prices_eur_kwh_json') %}
+        {% set prices = json_string | from_json(default=[]) %}
+        {% set price = prices[5] if prices is iterable and prices | length > 5 and 5 < prices | length else 'unknown' %}
+        {{ price | float('unknown') | round(5) }}
+
+- sensor:
+    - unique_id: entso_e_price_h06
+      name: 'Electricity Price Hour 06:00'
+      unit_of_measurement: "€/kWh"
+      icon: mdi:currency-eur
+      state: >
+        {% set json_string = states('sensor.entso_e_prices_entso_e_hourly_prices_eur_kwh_json') %}
+        {% set prices = json_string | from_json(default=[]) %}
+        {% set price = prices[6] if prices is iterable and prices | length > 6 and 6 < prices | length else 'unknown' %}
+        {{ price | float('unknown') | round(5) }}
+
+- sensor:
+    - unique_id: entso_e_price_h07
+      name: 'Electricity Price Hour 07:00'
+      unit_of_measurement: "€/kWh"
+      icon: mdi:currency-eur
+      state: >
+        {% set json_string = states('sensor.entso_e_prices_entso_e_hourly_prices_eur_kwh_json') %}
+        {% set prices = json_string | from_json(default=[]) %}
+        {% set price = prices[7] if prices is iterable and prices | length > 7 and 7 < prices | length else 'unknown' %}
+        {{ price | float('unknown') | round(5) }}
+
+- sensor:
+    - unique_id: entso_e_price_h08
+      name: 'Electricity Price Hour 08:00'
+      unit_of_measurement: "€/kWh"
+      icon: mdi:currency-eur
+      state: >
+        {% set json_string = states('sensor.entso_e_prices_entso_e_hourly_prices_eur_kwh_json') %}
+        {% set prices = json_string | from_json(default=[]) %}
+        {% set price = prices[8] if prices is iterable and prices | length > 8 and 8 < prices | length else 'unknown' %}
+        {{ price | float('unknown') | round(5) }}
+
+- sensor:
+    - unique_id: entso_e_price_h09
+      name: 'Electricity Price Hour 09:00'
+      unit_of_measurement: "€/kWh"
+      icon: mdi:currency-eur
+      state: >
+        {% set json_string = states('sensor.entso_e_prices_entso_e_hourly_prices_eur_kwh_json') %}
+        {% set prices = json_string | from_json(default=[]) %}
+        {% set price = prices[9] if prices is iterable and prices | length > 9 and 9 < prices | length else 'unknown' %}
+        {{ price | float('unknown') | round(5) }}
+
+- sensor:
+    - unique_id: entso_e_price_h10
+      name: 'Electricity Price Hour 10:00'
+      unit_of_measurement: "€/kWh"
+      icon: mdi:currency-eur
+      state: >
+        {% set json_string = states('sensor.entso_e_prices_entso_e_hourly_prices_eur_kwh_json') %}
+        {% set prices = json_string | from_json(default=[]) %}
+        {% set price = prices[10] if prices is iterable and prices | length > 10 and 10 < prices | length else 'unknown' %}
+        {{ price | float('unknown') | round(5) }}
+
+- sensor:
+    - unique_id: entso_e_price_h11
+      name: 'Electricity Price Hour 11:00'
+      unit_of_measurement: "€/kWh"
+      icon: mdi:currency-eur
+      state: >
+        {% set json_string = states('sensor.entso_e_prices_entso_e_hourly_prices_eur_kwh_json') %}
+        {% set prices = json_string | from_json(default=[]) %}
+        {% set price = prices[11] if prices is iterable and prices | length > 11 and 11 < prices | length else 'unknown' %}
+        {{ price | float('unknown') | round(5) }}
+
+- sensor:
+    - unique_id: entso_e_price_h12
+      name: 'Electricity Price Hour 12:00'
+      unit_of_measurement: "€/kWh"
+      icon: mdi:currency-eur
+      state: >
+        {% set json_string = states('sensor.entso_e_prices_entso_e_hourly_prices_eur_kwh_json') %}
+        {% set prices = json_string | from_json(default=[]) %}
+        {% set price = prices[12] if prices is iterable and prices | length > 12 and 12 < prices | length else 'unknown' %}
+        {{ price | float('unknown') | round(5) }}
+
+- sensor:
+    - unique_id: entso_e_price_h13
+      name: 'Electricity Price Hour 13:00'
+      unit_of_measurement: "€/kWh"
+      icon: mdi:currency-eur
+      state: >
+        {% set json_string = states('sensor.entso_e_prices_entso_e_hourly_prices_eur_kwh_json') %}
+        {% set prices = json_string | from_json(default=[]) %}
+        {% set price = prices[13] if prices is iterable and prices | length > 13 and 13 < prices | length else 'unknown' %}
+        {{ price | float('unknown') | round(5) }}
+
+- sensor:
+    - unique_id: entso_e_price_h14
+      name: 'Electricity Price Hour 14:00'
+      unit_of_measurement: "€/kWh"
+      icon: mdi:currency-eur
+      state: >
+        {% set json_string = states('sensor.entso_e_prices_entso_e_hourly_prices_eur_kwh_json') %}
+        {% set prices = json_string | from_json(default=[]) %}
+        {% set price = prices[14] if prices is iterable and prices | length > 14 and 14 < prices | length else 'unknown' %}
+        {{ price | float('unknown') | round(5) }}
+
+- sensor:
+    - unique_id: entso_e_price_h15
+      name: 'Electricity Price Hour 15:00'
+      unit_of_measurement: "€/kWh"
+      icon: mdi:currency-eur
+      state: >
+        {% set json_string = states('sensor.entso_e_prices_entso_e_hourly_prices_eur_kwh_json') %}
+        {% set prices = json_string | from_json(default=[]) %}
+        {% set price = prices[15] if prices is iterable and prices | length > 15 and 15 < prices | length else 'unknown' %}
+        {{ price | float('unknown') | round(5) }}
+
+- sensor:
+    - unique_id: entso_e_price_h16
+      name: 'Electricity Price Hour 16:00'
+      unit_of_measurement: "€/kWh"
+      icon: mdi:currency-eur
+      state: >
+        {% set json_string = states('sensor.entso_e_prices_entso_e_hourly_prices_eur_kwh_json') %}
+        {% set prices = json_string | from_json(default=[]) %}
+        {% set price = prices[16] if prices is iterable and prices | length > 16 and 16 < prices | length else 'unknown' %}
+        {{ price | float('unknown') | round(5) }}
+
+- sensor:
+    - unique_id: entso_e_price_h17
+      name: 'Electricity Price Hour 17:00'
+      unit_of_measurement: "€/kWh"
+      icon: mdi:currency-eur
+      state: >
+        {% set json_string = states('sensor.entso_e_prices_entso_e_hourly_prices_eur_kwh_json') %}
+        {% set prices = json_string | from_json(default=[]) %}
+        {% set price = prices[17] if prices is iterable and prices | length > 17 and 17 < prices | length else 'unknown' %}
+        {{ price | float('unknown') | round(5) }}
+
+- sensor:
+    - unique_id: entso_e_price_h18
+      name: 'Electricity Price Hour 18:00'
+      unit_of_measurement: "€/kWh"
+      icon: mdi:currency-eur
+      state: >
+        {% set json_string = states('sensor.entso_e_prices_entso_e_hourly_prices_eur_kwh_json') %}
+        {% set prices = json_string | from_json(default=[]) %}
+        {% set price = prices[18] if prices is iterable and prices | length > 18 and 18 < prices | length else 'unknown' %}
+        {{ price | float('unknown') | round(5) }}
+
+- sensor:
+    - unique_id: entso_e_price_h19
+      name: 'Electricity Price Hour 19:00'
+      unit_of_measurement: "€/kWh"
+      icon: mdi:currency-eur
+      state: >
+        {% set json_string = states('sensor.entso_e_prices_entso_e_hourly_prices_eur_kwh_json') %}
+        {% set prices = json_string | from_json(default=[]) %}
+        {% set price = prices[19] if prices is iterable and prices | length > 19 and 19 < prices | length else 'unknown' %}
+        {{ price | float('unknown') | round(5) }}
+
+- sensor:
+    - unique_id: entso_e_price_h20
+      name: 'Electricity Price Hour 20:00'
+      unit_of_measurement: "€/kWh"
+      icon: mdi:currency-eur
+      state: >
+        {% set json_string = states('sensor.entso_e_prices_entso_e_hourly_prices_eur_kwh_json') %}
+        {% set prices = json_string | from_json(default=[]) %}
+        {% set price = prices[20] if prices is iterable and prices | length > 20 and 20 < prices | length else 'unknown' %}
+        {{ price | float('unknown') | round(5) }}
+
+- sensor:
+    - unique_id: entso_e_price_h21
+      name: 'Electricity Price Hour 21:00'
+      unit_of_measurement: "€/kWh"
+      icon: mdi:currency-eur
+      state: >
+        {% set json_string = states('sensor.entso_e_prices_entso_e_hourly_prices_eur_kwh_json') %}
+        {% set prices = json_string | from_json(default=[]) %}
+        {% set price = prices[21] if prices is iterable and prices | length > 21 and 21 < prices | length else 'unknown' %}
+        {{ price | float('unknown') | round(5) }}
+
+- sensor:
+    - unique_id: entso_e_price_h22
+      name: 'Electricity Price Hour 22:00'
+      unit_of_measurement: "€/kWh"
+      icon: mdi:currency-eur
+      state: >
+        {% set json_string = states('sensor.entso_e_prices_entso_e_hourly_prices_eur_kwh_json') %}
+        {% set prices = json_string | from_json(default=[]) %}
+        {% set price = prices[22] if prices is iterable and prices | length > 22 and 22 < prices | length else 'unknown' %}
+        {{ price | float('unknown') | round(5) }}
+
+- sensor:
+    - unique_id: entso_e_price_h23
+      name: 'Electricity Price Hour 23:00'
+      unit_of_measurement: "€/kWh"
+      icon: mdi:currency-eur
+      state: >
+        {% set json_string = states('sensor.entso_e_prices_entso_e_hourly_prices_eur_kwh_json') %}
+        {% set prices = json_string | from_json(default=[]) %}
+        {% set price = prices[23] if prices is iterable and prices | length > 23 and 23 < prices | length else 'unknown' %}
+        {{ price | float('unknown') | round(5) }}
