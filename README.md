@@ -1,4 +1,4 @@
-# ESP32 Electricity Price Ticker for Home Assistant
+# ⚡ ESP32 Electricity Price Ticker for Home Assistant
 ![ESP32 Electricity Price Ticker](header.png)
 
 [![ESP32](https://img.shields.io/badge/ESP32-Ready-blue)](https://www.espressif.com/en/products/devkits)
@@ -10,7 +10,16 @@
 [![GitHub issues](https://img.shields.io/github/issues/Legolas-2025/esp32-electricity-price-ticker)](https://github.com/Legolas-2025/esp32-electricity-price-ticker/issues)
 [![GitHub pull requests](https://img.shields.io/github/issues-pr/Legolas-2025/esp32-electricity-price-ticker)](https://github.com/Legolas-2025/esp32-electricity-price-ticker/pulls)
 
-A complete ESP32-based solution that fetches real-time electricity prices from the ENTSO-E API (https://transparency.entsoe.eu/) and provides comprehensive price sensors for Home Assistant automation. Perfect for optimizing electricity costs and smart home energy management across 35+ European countries. Inspired by hass-entso-e project (https://github.com/JaccoR/hass-entso-e), modified to hardware version.
+This **ESP32 Electricity Price Ticker** is a real-time electricity price monitoring solution for smart homes. It fetches real-time electricity prices from the ENTSO-E API, adds relevant VAT/fees, and provides comprehensive smart price sensors for Home Assistant automation. It is perfect for optimizing electricity costs and smart home energy management across **35+ European countries**. Inspired by the [hass-entso-e project](https://github.com/JaccoR/hass-entso-e), this ESP32 hardware version offers enhanced reliability and offline recovery capabilities. 
+
+For detailed documentation, FAQ and troubleshooting, visit our 📖 [Wiki Home Page](https://github.com/Legolas-2025/esp32-electricity-price-ticker/wiki/1-Home).
+
+🚀 **v2.0.0 Features:**
+- Smart retry logic (3 attempts for failed updates)
+- Boot recovery (automatic price fetch after power outages)  
+- Real-time status monitoring sensors
+- 99% reliability improvement
+
 
 ## 🎯 Quick Start
 
