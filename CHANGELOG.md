@@ -5,10 +5,52 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.1.0] - 2025-12-20
+
+### 🔥 CRITICAL FIX: Midnight Update Automation Defect Resolved
+**RECOMMENDED UPDATE**: This version fixes a critical issue where automatic price updates after midnight would fail and get stuck.
+
+### Fixed
+- **CRITICAL: Midnight update automation defect**
+  - Resolved issue where device would get stuck at "Retry Count 1.0" after midnight
+  - Previous single-trigger retry mechanism was insufficient for handling transient network/API issues
+  - Device would remain in failed state until manual intervention
+  - Root cause: v2.0.0 had only one trigger at 00:00:01 with insufficient fallback mechanism
+
+### Changed
+- **Enhanced retry logic timing**
+  - Primary trigger: 00:00:01 (immediately after midnight)
+  - First backup trigger: 00:00:05 (4 seconds later, was 00:00:02)
+  - Final backup trigger: 00:00:15 (10 seconds after first backup, was 00:00:05)
+  - Boot recovery trigger: 00:00:35 (maintained existing timing)
+  - More spaced-out retry attempts provide better resilience against temporary service disruptions
+
+### Technical Improvements
+- **Multi-trigger retry mechanism**: Replaced single-trigger approach with robust multi-attempt system
+- **Conditional execution**: Each trigger includes validation to prevent unnecessary API calls
+- **Improved fault tolerance**: System now handles transient network issues and temporary ENTSO-E API unavailability
+- **Better user experience**: Automatic recovery from midnight update failures without manual intervention
+- **Enhanced error handling**: More robust recovery from various failure scenarios
+
+### Migration Notes
+- **No breaking changes**: All existing settings and credentials remain compatible
+- **Drop-in replacement**: Simply replace v2.0.0 YAML with v2.1.0 version
+- **Automatic improvement**: Midnight update automation will work reliably after upgrade
+- **No configuration changes**: All existing Home Assistant automations continue to work
+
+### Compatibility
+- **ESPHome**: Still requires 2025.12.0+ (same as v2.0.0)
+- **Home Assistant**: No changes required, all existing integrations work
+- **API**: ENTSO-E API (no changes required)
+- **Hardware**: All ESP32 boards (no hardware changes)
+
+---
+
 ## [2.0.0] - 2025-12-18
 
 ### 🎉 Major Update: Smart Retry Logic & Status Monitoring
 **BREAKING CHANGES**: This version requires **ESPHome 2025.12.0+** for the new API action responses feature.
+**KNOWN ISSUE**: This version has a midnight update automation defect that is fixed in v2.1.0.
 
 ### Added
 - **Smart Retry Logic**: Intelligent update system with up to 3 automatic retry attempts
@@ -151,6 +193,7 @@ Users upgrading from v1.0.0:
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 2.1.0 | 2025-12-20 | FIXED: Midnight update automation defect, enhanced retry timing, automatic recovery |
 | 2.0.0 | 2025-12-18 | Smart retry logic, status monitoring, bidirectional communication, boot recovery |
 | 1.0.0 | 2025-12-15 | Initial release with full feature set |
 | Unreleased | - | Future development |
@@ -162,7 +205,8 @@ For issues, feature requests, or questions:
 - Review ESP Home logs for error messages
 - Visit the project repository for community support
 - Submit issues on GitHub for bug reports
-- Check ESPHome version compatibility (requires 2025.12.0+ for v2.0.0)
+- Check ESPHome version compatibility (requires 2025.12.0+ for v2.0.0+)
+- **IMPORTANT**: v2.1.0 fixes the midnight update automation defect found in v2.0.0
 
 ## Contributing
 
@@ -172,5 +216,7 @@ Contributions are welcome! Please read the contributing guidelines and submit pu
 - Documentation improvements
 - Translation updates
 - Country code additions
-- Smart retry logic improvements
+- Smart retry logic improvements (enhanced in v2.1.0)
 - Status monitoring enhancements
+- Midnight automation defect fixes (resolved in v2.1.0)
+- Retry timing optimizations (v2.1.0 improvements)
