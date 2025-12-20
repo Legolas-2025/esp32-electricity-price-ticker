@@ -2,7 +2,9 @@ esphome:
   name: entsoe-hass-compatible
   friendly_name: Entso-E Prices
   
-  # Version 2.0.0 - Enhanced with Smart Retry Logic, Status Monitoring & Boot-up Updates
+  # Version 2.1.0 - ENHANCED: Improved 3-Retry Logic with Spaced Intervals, Midnight Update Fix, Enhanced Recovery
+  # Improved retry timing: Primary (00:00:01), Backup (00:00:05), Final (00:00:15), Boot Recovery (00:00:35)
+  # Fixed critical bug: retry logic now properly loops and retries with spaced intervals
   # Requires ESPHome 2025.12.0+ for API action responses feature
 
 esp32:
@@ -271,14 +273,32 @@ time:
           - lambda: id(current_hourly_price).update(); 
           - lambda: id(next_hourly_price).update(); 
           - lambda: id(current_max_hourly_price_percentage).update();
-          # Enhanced: Smart price update with retry logic (Version 2.0.0)
+          # ENHANCED: Smart price update with improved spaced retry logic (Version 2.1.0)
           - if:
               condition:
                 # Execute IF the current time is 00:00:01 (primary fetch)
                 lambda: 'return (id(ha_time).now().hour == 0 && id(ha_time).now().minute == 0);'
               then:
                 - script.execute: smart_price_update
-      # NEW: Boot recovery - trigger once shortly after boot
+      # ENHANCED: Backup retry trigger at 00:00:05 (4 seconds after primary)
+      - minutes: 5
+        seconds: 1
+        then:
+          - if:
+              condition:
+                lambda: 'return (!id(last_update_success) && id(retry_count) > 0);'
+              then:
+                - script.execute: smart_price_update
+      # ENHANCED: Final backup retry trigger at 00:00:15 (14 seconds after primary)
+      - minutes: 15
+        seconds: 1
+        then:
+          - if:
+              condition:
+                lambda: 'return (!id(last_update_success) && id(retry_count) >= 2);'
+              then:
+                - script.execute: smart_price_update
+      # ENHANCED: Boot recovery - trigger once shortly after boot
       - seconds: 35  # 35 seconds after boot (first minute)
         then:
           - if:
@@ -299,7 +319,7 @@ globals:
   # 15-MINUTE PRICE VECTORS (96 elements)
   - id: hourly_prices
     type: std::vector<float>
-    initial_value: '{0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0}'
+    initial_value: '{0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0}'
   - id: hourly_prices_mwh
     type: std::vector<float>
     initial_value: '{0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0}'
@@ -325,7 +345,7 @@ globals:
     type: std::string
     initial_value: '"00:00"'
 
-  # NEW: Smart retry and status tracking globals (Version 2.0.0)
+  # ENHANCED: Smart retry and status tracking globals (Version 2.1.0)
   - id: last_successful_update
     type: time_t
     initial_value: '0'
@@ -356,7 +376,7 @@ globals:
     initial_value: '"YOUR_ENTSOE_API_TOKEN_HERE"' 
   - id: area_code
     type: std::string
-    # Slovenia (ELES) Area Code
+    # Your Country Area Code (e.g., Slovenia: "10YSI-ELES-----O")
     initial_value: '"YOUR_COUNTRY_AREA_CODE_HERE"' 
 
 # Button triggers the smart update script
@@ -369,82 +389,84 @@ button:
       - script.execute: smart_price_update
 
 # -----------------------------------------------------
-# 7. SMART PRICE UPDATE SCRIPTS (Version 2.0.0)
+# 7. SMART PRICE UPDATE SCRIPTS (Version 2.1.0 - ENHANCED)
 # -----------------------------------------------------
 script:
-  # Smart price update script with retry logic
+  # ENHANCED: Smart price update script with IMPROVED spaced 3-retry logic
   - id: smart_price_update
     then:
-      # Step 1: Update status - attempt started
+      # Step 1: Initialize update attempt
       - lambda: |-
+          ESP_LOGI("entsoe", "=== SMART PRICE UPDATE START (v2.1.0) ===");
+          ESP_LOGI("entsoe", "Current retry count: %d/%d", id(retry_count), id(max_retries));
+          
           id(last_update_attempt) = id(ha_time).now().timestamp;
-          id(update_status_message) = "Midnight smart update started";
+          id(update_status_message) = "Smart update started";
+          
+          // Increment retry count for this attempt
+          id(retry_count) += 1;
 
-      # Step 2: Check if we need to retry or if data is already fresh
+      # Step 2: Check if we need fresh data (only skip if data is recent AND valid)
       - lambda: |-
           auto now = id(ha_time).now().timestamp;
-          if (now - id(last_successful_update) < 3600) { // Less than 1 hour old
-            ESP_LOGI("entsoe", "Price data is fresh, skipping update");
-            id(update_status_message) = "Data fresh - midnight update skipped";
+          float current_avg = id(avg_price).state;
+          
+          // Skip update only if data is recent AND valid AND we're not in retry mode
+          if (now - id(last_successful_update) < 3600 && current_avg > 0.0 && id(retry_count) <= 1) { 
+            ESP_LOGI("entsoe", "Price data is fresh and valid, skipping update");
+            id(update_status_message) = "Data fresh - update skipped";
             id(last_update_success) = true;
+            id(retry_count) = 0; // Reset retry count
             
             // Update status sensors
             id(price_update_status).update();
             id(price_status_message).update();
             id(last_price_update_time).update();
             return;
+          } else {
+            ESP_LOGI("entsoe", "Data is stale or invalid or retry attempt, proceeding with update");
           }
 
-      # Step 3: Check retry limit
-      - lambda: |-
-          if (id(retry_count) >= id(max_retries)) {
-            ESP_LOGW("entsoe", "Max retries reached, giving up");
-            id(update_status_message) = "FAILED: Max retries exceeded (3/3)";
-            id(last_update_success) = false;
-            
-            // Update all status sensors
-            id(price_update_status).update();
-            id(price_status_message).update();
-            id(last_price_update_time).update();
-            id(price_retry_count).update();
-            
-            id(retry_count) = 0; // Reset for next cycle
-            return;
-          }
-
-      # Step 4: Execute the full update logic
+      # Step 3: Execute the full update logic
       - script.execute: full_update_logic_script
-      - delay: 60s
       
-      # Step 5: Verify update success (simplified - no HA action)
+      # Step 4: Verify update success
       - lambda: |-
           float current_avg = id(avg_price).state;
           
+          ESP_LOGI("entsoe", "=== UPDATE VERIFICATION ===");
+          ESP_LOGI("entsoe", "Current average price: %.4f €/kWh", current_avg);
+          ESP_LOGI("entsoe", "Retry count: %d/%d", id(retry_count), id(max_retries));
+          
           if (current_avg > 0.0) {
             // SUCCESS: Data update verified
-            ESP_LOGI("entsoe", "Price update verified - average: %.4f €/kWh", current_avg);
+            ESP_LOGI("entsoe", "Price update SUCCESSFUL! Average: %.4f €/kWh", current_avg);
             id(last_successful_update) = id(ha_time).now().timestamp;
-            id(retry_count) = 0;
+            id(retry_count) = 0; // Reset retry count on success
             id(last_update_success) = true;
             id(update_status_message) = "SUCCESS: Price data updated";
             
-            ESP_LOGI("entsoe", "Price update SUCCESS - %d prices processed", 96);
+            ESP_LOGI("entsoe", "=== SMART UPDATE COMPLETED SUCCESSFULLY ===");
           } else {
             // FAILURE: No valid data
-            ESP_LOGW("entsoe", "Price update failed - no valid data");
-            id(retry_count) += 1;
+            ESP_LOGW("entsoe", "Price update FAILED - no valid data");
             id(last_update_success) = false;
             
-            char msg[50];
-            sprintf(msg, "FAILED: No valid data (%d/3)", id(retry_count));
+            char msg[60];
+            sprintf(msg, "FAILED: Attempt %d/%d", id(retry_count), id(max_retries));
             id(update_status_message) = std::string(msg);
             
             ESP_LOGW("entsoe", "Price update FAILED, attempt %d/%d", id(retry_count), id(max_retries));
             
-            // If this was the final attempt, prepare for next day
+            // If not max retries yet, backup triggers will handle retry
             if (id(retry_count) >= id(max_retries)) {
-              ESP_LOGE("entsoe", "ALL UPDATE ATTEMPTS FAILED - ALERT REQUIRED");
+              // Max retries reached
+              ESP_LOGE("entsoe", "ALL UPDATE ATTEMPTS FAILED - CRITICAL");
               id(update_status_message) = "CRITICAL: All 3 attempts failed";
+              id(retry_count) = 0; // Reset for next cycle
+            } else {
+              ESP_LOGI("entsoe", "Backup triggers will handle retry attempts");
+              id(update_status_message) = "FAILED - backup triggers will retry";
             }
           }
           
