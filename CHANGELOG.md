@@ -13,9 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - **CRITICAL: Midnight update automation defect**
   - Resolved issue where device would get stuck at "Retry Count 1.0" after midnight
-  - Previous single-trigger retry mechanism was insufficient for handling transient network/API issues
+  - Previous trigger retry mechanism was insufficient for handling transient network/API issues
   - Device would remain in failed state until manual intervention
-  - Root cause: v2.0.0 had only one trigger at 00:00:01 with insufficient fallback mechanism
 
 ### Changed
 - **Enhanced retry logic timing**
