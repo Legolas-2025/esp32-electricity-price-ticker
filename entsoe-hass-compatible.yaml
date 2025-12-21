@@ -27,7 +27,7 @@ wifi:
 
 api:
   encryption:
-    key: "REDACTED"
+    key: "YOUR_API_ENCRYPTION_KEY_HERE"
   actions:
     - action: verify_price_update
       supports_response: only
@@ -237,7 +237,8 @@ text_sensor:
 time:
   - platform: homeassistant
     id: ha_time 
-    timezone: "Europe/Ljubljana"
+    timezone: "YOUR_TIMEZONE_HERE"
+    # For instance: Europe/Ljubljana
     on_time:
       - minutes: /15
         seconds: 2
@@ -324,10 +325,11 @@ globals:
     initial_value: 'false'
   - id: api_token
     type: std::string
-    initial_value: '"YOUR_ENTSOE_TOKEN"'
+    initial_value: '"YOUR_ENTSOE_API_TOKEN_HERE"'
   - id: area_code
     type: std::string
-    initial_value: '"10YSI-ELES-----O"' 
+    initial_value: '"YOUR_COUNTRY_AREA_CODE_HERE"' 
+    # For instance: 10YSI-ELES-----O
 
 button:
   - platform: template
