@@ -12,10 +12,10 @@
 
 This **ESP32 Electricity Price Ticker** is a real-time electricity price monitoring solution for smart homes. It fetches real-time electricity prices from the ENTSO-E API, adds relevant VAT/fees, and provides comprehensive smart price sensors for Home Assistant automation. It is perfect for optimizing electricity costs and smart home energy management across **35+ European countries**. Inspired by the [hass-entso-e project](https://github.com/JaccoR/hass-entso-e), this ESP32 hardware version offers enhanced reliability and offline recovery capabilities. 
 
-For detailed documentation, FAQ and troubleshooting, visit our 📖 [Wiki Home Page](https://github.com/Legolas-2025/esp32-electricity-price-ticker/wiki/1-Home).
+For detailed documentation, FAQ and troubleshooting, visit our 📖 [Wiki Home Page](https://github.com/Legolas-2025/esp32-electricity-price-ticker/wiki/Home).
 
 🚀 **v2.2.1 Features:**
-- **FIXED: Midnight automation & lambda type conversion issues** - Complete reliability improvement
+- **FIXED: Midnight automation & retry deadlock issues** - Complete reliability improvement
 - **Enhanced retry logic** with robust timing (midnight 00:00:30, retries every 5 minutes)
 - **Boot recovery** (automatic price fetch after power outages)  
 - Real-time status monitoring sensors
@@ -47,11 +47,11 @@ For detailed documentation, FAQ and troubleshooting, visit our 📖 [Wiki Home P
 - **Manual force update button** for testing
 - **Home Assistant time synchronization**
 
-### 🆕 Version 2.2.1: Complete Reliability & Lambda Fix
+### 🆕 Version 2.2.1: Complete Reliability & Midnight Automation Fix
 - **🔥 CRITICAL FIXES**: 
-  - Lambda type conversion error resolved (Price Update Status sensor)
   - Midnight automation silent failure completely eliminated
   - Trigger timing deadlock completely resolved
+  - Retry deadlock issue resolved
 - **🆕 Enhanced Midnight Logic**: Fixed timing at 00:00:30 with proper state management
 - **Enhanced Retry Logic**: Every 5 minutes with smart success checking
 - **Intelligent Retry Logic**: Up to unlimited automatic retry attempts with proper state tracking
@@ -60,7 +60,7 @@ For detailed documentation, FAQ and troubleshooting, visit our 📖 [Wiki Home P
 - **Bidirectional Communication**: Home Assistant can verify update status
 - **Critical Failure Detection**: Automatic alerts when all retry attempts fail
 - **Cross-Platform Verification**: ESPHome validates updates with Home Assistant
-- **🆕 Boot Recovery**: Automatic price fetch on device boot for power outage recovery
+- **Boot Recovery**: Automatic price fetch on device boot for power outage recovery
 - **🛠️ Production Ready**: All compilation errors resolved for smooth installation
 
 ## 📋 Requirements
@@ -77,11 +77,6 @@ For detailed documentation, FAQ and troubleshooting, visit our 📖 [Wiki Home P
 
 ### ⚠️ Version 2.2.1 Requirements
 - **ESPHome 2025.12.0+** (required for API action responses feature)
-- Enhanced Home Assistant integration for status monitoring
-- **Boot Recovery**: Automatic power outage recovery functionality
-- **Fixed Midnight Updates**: Completely reliable automation with proper state management
-- **Enhanced Retry Logic**: Bulletproof timing prevents any transient failures
-- **Production Ready**: All ESPHome compilation errors resolved in v2.2.1
 
 ### Network
 - WiFi network with 2.4GHz support
@@ -602,14 +597,7 @@ automation:
 - Verify ESPHome device is connected and online
 - Check ESPHome logs for API action errors
 
-#### 6. Version 2.2.1: Lambda Type Conversion Errors (FIXED)
-**Symptoms**: Compilation errors or runtime issues with status sensors
-**Solutions**:
-- **Update to v2.2.1**: Lambda type conversion issue has been completely resolved
-- **Explicit string casting**: v2.2.1 uses proper std::string() casting
-- **Compilation fixes**: All lambda return type issues fixed
-
-#### 7. Version 2.2.1: Midnight Update Issues (COMPLETELY FIXED)
+#### 6. Version 2.2.1: Midnight Update Issues (COMPLETELY FIXED)
 **Symptoms**: Automatic price updates failing after midnight
 **Root Causes Fixed**:
 - **Nested Trigger Bug**: Fixed on_time primary fetch nested inside /15 minute interval at 00:00:01
@@ -688,7 +676,7 @@ Common log messages and their meanings:
 
 ### Upgrading from Version 2.1.0
 
-1. **CRITICAL FIXES**: Lambda type conversion and midnight automation issues resolved
+1. **CRITICAL FIXES**: Midnight automation and retry deadlock issues resolved
 2. **Drop-in replacement**: Simply replace YAML file with v2.2.1 version
 3. **No configuration changes**: All existing settings remain compatible
 4. **Better reliability**: Bulletproof timing prevents any transient failures
@@ -706,7 +694,7 @@ Common log messages and their meanings:
 - **Enhanced update schedule** (midnight at 00:00:30 with 5-minute retries)
 - **New status sensors** require HA configuration
 - **API actions must be enabled** for full functionality
-- **Lambda fixes**: Proper string type casting eliminates compilation issues
+- **Enhanced retry timing**: Improved midnight automation with 30-second buffer
 
 ## 📈 Data Source Information
 
@@ -818,7 +806,7 @@ script:
 See [CHANGELOG.md](CHANGELOG.md) for detailed version history and new features.
 
 ### Version 2.2.1 Highlights
-- **🔥 CRITICAL FIXES**: Lambda type conversion and midnight automation completely resolved
+- **🔥 CRITICAL FIXES**: Midnight automation and retry deadlock completely resolved
 - **Enhanced Midnight Logic**: Fixed timing at 00:00:30 with proper state management
 - **Bulletproof Retry Logic**: Every 5 minutes with smart success checking
 - **Status Monitoring**: Real-time update status and retry tracking
@@ -835,7 +823,7 @@ Contributions are welcome! Please feel free to submit:
 - **Documentation improvements** for clarity
 - **Code optimizations** for performance
 - **Smart retry enhancements** for better reliability
-- **Lambda improvements** (following v2.2.1 fixes)
+- **Midnight automation enhancements** (following v2.2.1 fixes)
 
 ### Development Setup
 1. Fork the repository
@@ -867,7 +855,6 @@ This project is open source and available under the MIT License. You are free to
 - **ENTSO-E API Documentation**: Official API reference
 
 ### Version 2.2.1 Specific Support
-- **Lambda Type Issues**: Completely resolved in v2.2.1
 - **Midnight Automation**: Bulletproof fix implemented
 - **ESPHome Compatibility**: Ensure version 2025.12.0 or later
 - **Status Monitoring**: Verify API actions are enabled in HA
@@ -881,7 +868,7 @@ This project is open source and available under the MIT License. You are free to
   - ESP Home 2024.1+ (v1.0.0)
   - Home Assistant 2023.1+
 - **License**: MIT
-- **Author**: Legolas-2025 with community contributions and AI assistance
+- **Author**: Legolas-2025 with AI assistance
 
 **Happy monitoring!** ⚡📊
 
