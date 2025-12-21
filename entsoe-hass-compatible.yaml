@@ -2,8 +2,11 @@ esphome:
   name: entsoe-hass-compatible
   friendly_name: Entso-E Prices
 
-  # Version 2.2.1 - FIX: Lambda Type Conversion
+  # Version 2.2.1 - Fixed AI generated mistakes while upgrading to version 2.2.0 
+  # FIX: Lambda Type Conversion
   # Corrected the ternary operator return type for the Price Update Status sensor.
+  # FIX: Restored missing sensor publication logic
+  # Corrected "Unknown" states for hourly max/min and percentage sensors.
   
   # Version 2.2.0 - CRITICAL FIX: Midnight Update & Robust Retry Logic
   # Fixed: Midnight silent failure caused by trigger timing and retry-count deadlock.
@@ -24,8 +27,7 @@ wifi:
 
 api:
   encryption:
-    key: "YOUR_API_ENCRYPTION_KEY_HERE"
-  # Enable actions for bidirectional communication with Home Assistant
+    key: "REDACTED"
   actions:
     - action: verify_price_update
       supports_response: only
@@ -207,7 +209,6 @@ text_sensor:
     id: price_update_status
     icon: "mdi:update"
     lambda: |-
-      // FIXED v2.2.1: Explicitly cast string to avoid compilation error
       return id(last_update_success) ? std::string("SUCCESS") : std::string("FAILED/WAITING");
 
   - platform: template
@@ -236,7 +237,7 @@ text_sensor:
 time:
   - platform: homeassistant
     id: ha_time 
-    timezone: "YOUR_TIMEZONE_HERE"
+    timezone: "Europe/Ljubljana"
     on_time:
       - minutes: /15
         seconds: 2
@@ -323,10 +324,10 @@ globals:
     initial_value: 'false'
   - id: api_token
     type: std::string
-    initial_value: '"YOUR_ENTSOE_API_TOKEN_HERE"'
+    initial_value: '"YOUR_ENTSOE_TOKEN"'
   - id: area_code
     type: std::string
-    initial_value: '"YOUR_COUNTRY_AREA_CODE_HERE"' 
+    initial_value: '"10YSI-ELES-----O"' 
 
 button:
   - platform: template
@@ -361,6 +362,10 @@ script:
           id(price_status_message).update();
           id(last_price_update_time).update();
           id(price_retry_count).update();
+          // Update derived sensors immediately
+          id(current_price).update();
+          id(current_hourly_price).update();
+          id(current_max_hourly_price_percentage).update();
 
   - id: full_update_logic_script
     then:
@@ -442,15 +447,33 @@ script:
               id(min_price_time_str) = min_t;
               id(max_price_time_str) = max_t;
 
+              // RESTORED HOURLY SENSOR LOGIC
+              float h_min_val = 9999, h_max_val = -9999;
+              int h_min_idx = 0, h_max_idx = 0;
               std::string json = "[";
+              
               for (int i=0; i<24; i++) {
                 float avg = h_counts[i] > 0 ? h_sums[i]/h_counts[i] : 0;
                 id(hourly_avg_prices_kwh)[i] = avg;
+                
+                if (avg < h_min_val) { h_min_val = avg; h_min_idx = i; }
+                if (avg > h_max_val) { h_max_val = avg; h_max_idx = i; }
+                
                 char p_buf[10]; sprintf(p_buf, "%.4f", avg);
                 json += p_buf; if(i<23) json += ",";
               }
               json += "]";
+              
               id(json_hourly_prices_kwh).publish_state(json.c_str());
+              id(max_hourly_price).publish_state(h_max_val);
+              id(min_hourly_price).publish_state(h_min_val);
+              
+              char h_buf[6];
+              sprintf(h_buf, "%02d:00", h_max_idx); id(max_hourly_price_time_str) = h_buf;
+              sprintf(h_buf, "%02d:00", h_min_idx); id(min_hourly_price_time_str) = h_buf;
+              
+              id(max_hourly_price_time).publish_state(id(max_hourly_price_time_str));
+              id(min_hourly_price_time).publish_state(id(min_hourly_price_time_str));
             }
           }
           http.end();
