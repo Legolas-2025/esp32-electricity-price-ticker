@@ -35,7 +35,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - **Double Precision Math Implementation**
   - Migrated all price calculation constants from float to double
-  - Changes: PROVIDER_FEE, VAT_RATE, and MULT constants now use double type
+  - Changes: PROV_FEE, VAT_R, and MULT constants now use double type
   - Eliminates rounding errors in daily Average Price calculations
   - Improves accuracy of financial calculations for long-term tracking
   - Affects: raw_sum_mwh accumulator, final average calculation
