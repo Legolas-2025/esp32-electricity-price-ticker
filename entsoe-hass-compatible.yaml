@@ -2,7 +2,7 @@ esphome:
   name: entsoe-hass-compatible
   friendly_name: Entso-E Prices
 
-# Version: v2.3.5 (Stable Release)
+# Version: v2.3.5 (This Is The Latest Stable Release)
 # Summary of Changes from v2.2.1:
 # - Implemented Robust "Forward-Fill" XML parsing to handle ENTSO-E data compression (missing sequential identical points).
 # - Switched to 'double' precision math to resolve daily Average Price rounding errors.
