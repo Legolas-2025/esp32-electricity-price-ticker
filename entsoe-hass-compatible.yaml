@@ -2,15 +2,14 @@ esphome:
   name: entsoe-hass-compatible
   friendly_name: Entso-E Prices
 
-  # Version 2.2.1 - Fixed AI generated mistakes while upgrading to version 2.2.0 
-  # FIX: Lambda Type Conversion
-  # Corrected the ternary operator return type for the Price Update Status sensor.
-  # FIX: Restored missing sensor publication logic
-  # Corrected "Unknown" states for hourly max/min and percentage sensors.
-  
-  # Version 2.2.0 - CRITICAL FIX: Midnight Update & Robust Retry Logic
-  # Fixed: Midnight silent failure caused by trigger timing and retry-count deadlock.
-  # Requires ESPHome 2025.12.0+ for API action responses feature.
+# Version: v2.3.5 (Stable Release)
+# Summary of Changes from v2.2.1:
+# - Implemented Robust "Forward-Fill" XML parsing to handle ENTSO-E data compression (missing sequential identical points).
+# - Switched to 'double' precision math to resolve daily Average Price rounding errors.
+# - Replaced 'Retry Count' with 'Daily Price Update Attempts' (midnight reset) for better diagnostics.
+# - Fix: Race condition causing "00:00" and "Unknown" states on stat sensors.
+# - New: Daily Price Update Attempts sensor (Integer, Midnight Reset).
+# - New: Current Price Status sensor (Valid/Missing diagnostic).
 
 esp32:
   board: esp32dev
@@ -161,11 +160,12 @@ sensor:
       return (current_p / max_p) * 100.0;
 
   - platform: template
-    name: "Price Update Retry Count"
-    id: price_retry_count
+    name: "Daily Price Update Attempts"
+    id: daily_price_update_attempts
     icon: "mdi:counter"
+    accuracy_decimals: 0
     lambda: |-
-      return id(retry_count);
+      return (int)id(retry_count);
 
 # -----------------------------------------------------
 # 3. TEXT SENSORS
@@ -231,6 +231,13 @@ text_sensor:
     icon: "mdi:message-text-outline"
     lambda: 'return id(update_status_message);'
 
+  - platform: template
+    name: "Current Price Status"
+    id: current_price_status
+    icon: "mdi:information-outline"
+    lambda: |-
+      return id(current_price_status_str);
+
 # -----------------------------------------------------
 # 4. TIME & SCHEDULING
 # -----------------------------------------------------
@@ -238,7 +245,6 @@ time:
   - platform: homeassistant
     id: ha_time 
     timezone: "YOUR_TIMEZONE_HERE"
-    # For instance: Europe/Ljubljana
     on_time:
       - minutes: /15
         seconds: 2
@@ -276,6 +282,15 @@ time:
               then:
                 - script.execute: smart_price_update
                 - lambda: 'id(boot_recovery_executed) = true;'
+
+      - seconds: 5
+        minutes: 0
+        hours: 0
+        then:
+          - lambda: |-
+              id(retry_count) = 0;
+              id(daily_price_update_attempts).publish_state(0);
+          - logger.log: "Midnight reset: Daily update attempts cleared."
 
 # -----------------------------------------------------
 # 5. GLOBALS & HTTP
@@ -328,19 +343,32 @@ globals:
     initial_value: '"YOUR_ENTSOE_API_TOKEN_HERE"'
   - id: area_code
     type: std::string
-    initial_value: '"YOUR_COUNTRY_AREA_CODE_HERE"' 
-    # For instance: 10YSI-ELES-----O
+    initial_value: '"YOUR_COUNTRY_AREA_CODE_HERE"'
+  - id: current_price_status_str
+    type: std::string
+    initial_value: '"Initializing..." ' 
 
 button:
   - platform: template
     name: "Entso-E Force Update"
-    id: entsoe_force_update
+    id: force_update_button
+    icon: "mdi:refresh"
     on_press:
-      - lambda: 'id(retry_count) = 0;'
-      - script.execute: smart_price_update
+      then:
+        # 1. Set the internal variable
+        - logger.log: "Manual Update Triggered"
+        - lambda: 'id(update_status_message) = "Updating...";'
+        # 2. Force the text sensor to show "Updating..." immediately
+        - text_sensor.template.publish:
+            id: price_status_message
+            state: "Updating..."
+        # 3. Wait a brief moment so you can actually see it in the UI
+        - delay: 500ms
+        # 4. Now run the actual update script
+        - script.execute: smart_price_update
 
 # -----------------------------------------------------
-# 6. SCRIPTS
+# 6. SCRIPTS (v2.3.4 - Universal EU Sync Fix)
 # -----------------------------------------------------
 script:
   - id: smart_price_update
@@ -348,43 +376,45 @@ script:
       - lambda: |-
           id(last_update_attempt) = id(ha_time).now().timestamp;
           id(retry_count)++;
+          id(daily_price_update_attempts).publish_state(id(retry_count));
       - script.execute: full_update_logic_script
       - lambda: |-
-          if (id(avg_price).state > 0.0) {
-            id(last_successful_update) = id(ha_time).now().timestamp;
-            id(last_update_success) = true;
-            id(update_status_message) = "Update Successful";
-          } else {
-            id(last_update_success) = false;
-            char msg[60];
-            sprintf(msg, "Failed (Attempt %d)", id(retry_count));
-            id(update_status_message) = std::string(msg);
+          auto t = id(ha_time).now();
+          int cur_idx = (t.hour * 4) + (t.minute / 15);
+          
+          // Update Current Price Status
+          if (cur_idx >= 0 && cur_idx < 96) {
+            float val = id(hourly_prices)[cur_idx];
+            id(current_price_status_str) = std::isnan(val) ? "Missing" : "Valid";
           }
+          
+          // REFRESH ALL SENSORS IN CORRECT ORDER
+          id(current_price_status).update();
           id(price_update_status).update();
           id(price_status_message).update();
-          id(last_price_update_time).update();
-          id(price_retry_count).update();
-          // Update derived sensors immediately
           id(current_price).update();
           id(current_hourly_price).update();
           id(current_max_hourly_price_percentage).update();
+          
+          // Force update of the Time sensors to stop them from reverting
+          id(max_hourly_price_time).update();
+          id(min_hourly_price_time).update();
 
   - id: full_update_logic_script
     then:
       - lambda: |-
-          const float PROVIDER_FEE = 0.12; 
-          const float VAT_RATE = 0.22; 
-          const float MULTIPLIER = (1.0 + PROVIDER_FEE) * (1.0 + VAT_RATE);
+          const double PROV_FEE = 0.12; 
+          const double VAT_R = 0.22; 
+          const double MULT = (1.0 + PROV_FEE) * (1.0 + VAT_R);
 
-          auto time_now = id(ha_time).now();
-          time_t now_ts = time_now.timestamp;
-          time_t yesterday_ts = now_ts - 86400;
-          struct tm *tm_y = localtime(&yesterday_ts);
+          auto t_now = id(ha_time).now();
+          time_t y_ts = t_now.timestamp - 86400;
+          struct tm *tm_y = localtime(&y_ts);
           
           char buf[16];
           sprintf(buf, "%04d%02d%02d2300", tm_y->tm_year + 1900, tm_y->tm_mon + 1, tm_y->tm_mday);
           std::string pStart = std::string(buf);
-          sprintf(buf, "%04d%02d%02d2300", time_now.year, time_now.month, time_now.day_of_month);
+          sprintf(buf, "%04d%02d%02d2300", t_now.year, t_now.month, t_now.day_of_month);
           std::string pEnd = std::string(buf);
 
           std::string url = "https://web-api.tp.entsoe.eu/api?securityToken=" + id(api_token) + 
@@ -399,14 +429,14 @@ script:
           if (httpCode == 200) {
             String payload = http.getString();
             std::string xml = payload.c_str();
-            std::vector<float> n_kwh(96, 0.0);
-            std::vector<float> n_mwh(96, 0.0);
-            std::vector<float> h_sums(24, 0.0);
-            std::vector<int> h_counts(24, 0);
+            
+            std::vector<float> n_kwh(96, NAN); 
             int count = 0;
-            float min_p = 9999, max_p = -9999, sum_p = 0;
-            std::string min_t = "00:00", max_t = "00:00";
+            double raw_sum_mwh = 0.0; 
+            int last_pos = 0;
+            float last_raw_price = NAN;
 
+            // 1. Parsing and Gap Filling
             size_t pos = 0;
             while ((pos = xml.find("<Point>", pos)) != std::string::npos) {
               size_t end = xml.find("</Point>", pos);
@@ -419,63 +449,101 @@ script:
               size_t e_pri = p_xml.find("</price.amount>");
 
               if (s_pos != std::string::npos && s_pri != std::string::npos) {
-                int idx = parse_number<int>(p_xml.substr(s_pos+10, e_pos-(s_pos+10))).value_or(0) - 1;
-                float raw = parse_number<float>(p_xml.substr(s_pri+14, e_pri-(s_pri+14))).value_or(0.0);
-                
-                if (idx >= 0 && idx < 96) {
-                  float f_mwh = raw * MULTIPLIER;
-                  float f_kwh = f_mwh / 1000.0;
-                  n_kwh[idx] = f_kwh;
-                  n_mwh[idx] = f_mwh;
-                  sum_p += f_kwh;
-                  count++;
+                int current_pos = atoi(p_xml.substr(s_pos+10, e_pos-(s_pos+10)).c_str());
+                float current_raw_price = atof(p_xml.substr(s_pri+14, e_pri-(s_pri+14)).c_str());
 
-                  int hr = idx / 4;
-                  char t_buf[6]; sprintf(t_buf, "%02d:%02d", hr, (idx % 4) * 15);
-                  if (f_kwh < min_p) { min_p = f_kwh; min_t = t_buf; }
-                  if (f_kwh > max_p) { max_p = f_kwh; max_t = t_buf; }
-                  h_sums[hr] += f_kwh; h_counts[hr]++;
+                if (current_pos > (last_pos + 1) && !std::isnan(last_raw_price)) {
+                  for (int f = last_pos + 1; f < current_pos; f++) {
+                    if (f <= 96) {
+                      n_kwh[f-1] = (float)((double)last_raw_price * MULT / 1000.0);
+                      raw_sum_mwh += (double)last_raw_price; count++;
+                    }
+                  }
+                }
+                if (current_pos <= 96) {
+                  n_kwh[current_pos-1] = (float)((double)current_raw_price * MULT / 1000.0);
+                  raw_sum_mwh += (double)current_raw_price; count++;
+                  last_pos = current_pos; last_raw_price = current_raw_price;
                 }
               }
               pos = end + 8;
             }
+            // Trailing fill
+            if (last_pos > 0 && last_pos < 96 && !std::isnan(last_raw_price)) {
+              for (int f = last_pos + 1; f <= 96; f++) {
+                n_kwh[f-1] = (float)((double)last_raw_price * MULT / 1000.0);
+                raw_sum_mwh += (double)last_raw_price; count++;
+              }
+            }
 
-            if (count >= 90) {
+            if (count > 0) {
               id(hourly_prices) = n_kwh;
-              id(hourly_prices_mwh) = n_mwh;
-              id(min_price).publish_state(min_p);
-              id(max_price).publish_state(max_p);
-              id(avg_price).publish_state(sum_p / count);
-              id(min_price_time_str) = min_t;
-              id(max_price_time_str) = max_t;
-
-              // RESTORED HOURLY SENSOR LOGIC
-              float h_min_val = 9999, h_max_val = -9999;
-              int h_min_idx = 0, h_max_idx = 0;
-              std::string json = "[";
               
+              // 2. Statistics Calculation
+              float min_v = 9999.0, max_v = -9999.0;
+              int min_idx = 0, max_idx = 0;
+              
+              // Check every 15-min slot for absolute High/Low
+              for(int i=0; i<96; i++) {
+                if(!std::isnan(n_kwh[i])) {
+                  if(n_kwh[i] < min_v) { min_v = n_kwh[i]; min_idx = i; }
+                  if(n_kwh[i] > max_v) { max_v = n_kwh[i]; max_idx = i; }
+                }
+              }
+
+              // 3. Hourly Aggregation
+              std::vector<float> h_sums(24, 0.0);
+              std::vector<int> h_counts(24, 0);
+              float h_min_v = 9999, h_max_v = -9999;
+              int h_min_i = 0, h_max_i = 0;
+
+              for(int i=0; i<96; i++) {
+                if(!std::isnan(n_kwh[i])) {
+                  h_sums[i/4] += n_kwh[i]; h_counts[i/4]++;
+                }
+              }
+
+              std::string json = "[";
               for (int i=0; i<24; i++) {
-                float avg = h_counts[i] > 0 ? h_sums[i]/h_counts[i] : 0;
-                id(hourly_avg_prices_kwh)[i] = avg;
-                
-                if (avg < h_min_val) { h_min_val = avg; h_min_idx = i; }
-                if (avg > h_max_val) { h_max_val = avg; h_max_idx = i; }
-                
-                char p_buf[10]; sprintf(p_buf, "%.4f", avg);
-                json += p_buf; if(i<23) json += ",";
+                if (h_counts[i] > 0) {
+                  float h_avg = h_sums[i]/h_counts[i];
+                  id(hourly_avg_prices_kwh)[i] = h_avg;
+                  if (h_avg < h_min_v) { h_min_v = h_avg; h_min_i = i; }
+                  if (h_avg > h_max_v) { h_max_v = h_avg; h_max_i = i; }
+                  char p_buf[10]; sprintf(p_buf, "%.4f", h_avg); json += p_buf;
+                } else {
+                  id(hourly_avg_prices_kwh)[i] = NAN; json += "null";
+                }
+                if(i<23) json += ",";
               }
               json += "]";
-              
+
+              // 4. PUBLISH ALL SENSORS
               id(json_hourly_prices_kwh).publish_state(json.c_str());
-              id(max_hourly_price).publish_state(h_max_val);
-              id(min_hourly_price).publish_state(h_min_val);
               
+              // Absolute Min/Max (15-min points)
+              id(min_price).publish_state(min_v);
+              id(max_price).publish_state(max_v);
+              char t_buf[6];
+              sprintf(t_buf, "%02d:%02d", (min_idx/4), (min_idx%4)*15); id(min_price_time_str) = t_buf;
+              sprintf(t_buf, "%02d:%02d", (max_idx/4), (max_idx%4)*15); id(max_price_time_str) = t_buf;
+
+              // Hourly Min/Max
+              id(min_hourly_price).publish_state(h_min_v);
+              id(max_hourly_price).publish_state(h_max_v);
               char h_buf[6];
-              sprintf(h_buf, "%02d:00", h_max_idx); id(max_hourly_price_time_str) = h_buf;
-              sprintf(h_buf, "%02d:00", h_min_idx); id(min_hourly_price_time_str) = h_buf;
-              
-              id(max_hourly_price_time).publish_state(id(max_hourly_price_time_str));
-              id(min_hourly_price_time).publish_state(id(min_hourly_price_time_str));
+              sprintf(h_buf, "%02d:00", h_min_i); id(min_hourly_price_time_str) = h_buf;
+              sprintf(h_buf, "%02d:00", h_max_i); id(max_hourly_price_time_str) = h_buf;
+
+              if (count >= 96) {
+                double f_avg = (raw_sum_mwh / (double)count * MULT) / 1000.0;
+                id(avg_price).publish_state((float)f_avg);
+              }
+
+              id(last_successful_update) = id(ha_time).now().timestamp;
+              id(last_update_success) = true;
+              char m[40]; sprintf(m, "Success (%d/96)", count);
+              id(update_status_message) = std::string(m);
             }
           }
           http.end();
