@@ -10,16 +10,17 @@
 [![GitHub issues](https://img.shields.io/github/issues/Legolas-2025/esp32-electricity-price-ticker)](https://github.com/Legolas-2025/esp32-electricity-price-ticker/issues)
 [![GitHub pull requests](https://img.shields.io/github/issues-pr/Legolas-2025/esp32-electricity-price-ticker)](https://github.com/Legolas-2025/esp32-electricity-price-ticker/pulls)
 
-This **ESP32 Electricity Price Ticker** is a real-time electricity price monitoring solution for smart homes. It fetches real-time electricity prices from the ENTSO-E API, adds relevant VAT/fees, and provides comprehensive smart price sensors for Home Assistant automation. It is perfect for optimizing electricity costs and smart home energy management across **35+ European countries**. Inspired by the [hass-entso-e project](https://github.com/JaccoR/hass-entso-e), this ESP32 hardware version offers enhanced reliability and offline recovery capabilities. 
+This **ESP32 Electricity Price Ticker** is a real-time electricity price monitoring solution for smart homes. It fetches real-time electricity prices from the ENTSO-E API, adds relevant VAT/fees, and provides comprehensive smart price sensors for Home Assistant automation. It is perfect for optimizing electricity costs and smart home energy management across **35+ European countries**. Inspired by the [hass-entso-e project](https://github.com/JaccoR/hass-entso-e), this ESP32 hardware version offers enhanced reliability and offline recovery capabilities.
 
 For detailed documentation, FAQ and troubleshooting, visit our 📖 [Wiki Home Page](https://github.com/Legolas-2025/esp32-electricity-price-ticker/wiki/Home).
 
-🚀 **v2.2.1 Features:**
-- **FIXED: Midnight automation & retry deadlock issues** - Complete reliability improvement
-- **Enhanced retry logic** with robust timing (midnight 00:00:30, retries every 5 minutes)
-- **Boot recovery** (automatic price fetch after power outages)  
-- Real-time status monitoring sensors
-- 99.9% reliability improvement with bulletproof automation
+🚀 **v2.3.5 Features:**
+- **FIXED: Forward-Fill XML Parsing** - Handles ENTSO-E data compression gaps reliably
+- **FIXED: Double Precision Math** - Resolves daily Average Price rounding errors
+- **FIXED: Race Condition on Stat Sensors** - Eliminates "00:00" and "Unknown" states
+- **NEW: Daily Price Update Attempts** - Better diagnostics with midnight reset
+- **NEW: Current Price Status Sensor** - Valid/Missing diagnostic indicator
+- **Enhanced reliability** with robust data parsing and precision calculations
 
 ## 🎯 Quick Start
 
@@ -47,21 +48,16 @@ For detailed documentation, FAQ and troubleshooting, visit our 📖 [Wiki Home P
 - **Manual force update button** for testing
 - **Home Assistant time synchronization**
 
-### 🆕 Version 2.2.1: Complete Reliability & Midnight Automation Fix
-- **🔥 CRITICAL FIXES**: 
-  - Midnight automation silent failure completely eliminated
-  - Trigger timing deadlock completely resolved
-  - Retry deadlock issue resolved
-- **🆕 Enhanced Midnight Logic**: Fixed timing at 00:00:30 with proper state management
-- **Enhanced Retry Logic**: Every 5 minutes with smart success checking
-- **Intelligent Retry Logic**: Up to unlimited automatic retry attempts with proper state tracking
-- **Data Freshness Check**: Prevents unnecessary API calls if data is recent
-- **Status Monitoring Sensors**: Real-time update status and retry tracking
-- **Bidirectional Communication**: Home Assistant can verify update status
-- **Critical Failure Detection**: Automatic alerts when all retry attempts fail
-- **Cross-Platform Verification**: ESPHome validates updates with Home Assistant
-- **Boot Recovery**: Automatic price fetch on device boot for power outage recovery
-- **🛠️ Production Ready**: All compilation errors resolved for smooth installation
+### 🆕 Version 2.3.5: Precision & Reliability Improvements
+- **🔥 CRITICAL FIXES**:
+  - Forward-Fill XML parsing handles data compression gaps
+  - Double precision math eliminates rounding errors in average price
+  - Race condition fix for stat sensors ("00:00" and "Unknown" states resolved)
+- **🆕 Enhanced Diagnostics**:
+  - Daily Price Update Attempts sensor with midnight reset
+  - Current Price Status sensor (Valid/Missing indicator)
+  - Improved data integrity with NAN initialization
+- **🛠️ Production Ready**: Complete reliability improvements for data accuracy
 
 ## 📋 Requirements
 
@@ -75,8 +71,12 @@ For detailed documentation, FAQ and troubleshooting, visit our 📖 [Wiki Home P
 - **Home Assistant** instance
 - **ENTS0-E API** account (free)
 
-### ⚠️ Version 2.2.1 Requirements
+### ⚠️ Version 2.3.5 Requirements
 - **ESPHome 2025.12.0+** (required for API action responses feature)
+- Enhanced Home Assistant integration for status monitoring
+- **Data Integrity**: NAN initialization ensures missing data reports as "unavailable"
+- **Precision Calculations**: Double precision for accurate average price reporting
+- **Robust Parsing**: Forward-Fill algorithm handles all ENTSO-E data formats
 
 ### Network
 - WiFi network with 2.4GHz support
@@ -104,7 +104,7 @@ For detailed documentation, FAQ and troubleshooting, visit our 📖 [Wiki Home P
 
 ### Step 2: Install ESP Home
 
-**⚠️ Version 2.2.1 users**: Ensure you have ESPHome 2025.12.0 or later.
+**⚠️ Version 2.3.5 users**: Ensure you have ESPHome 2025.12.0 or later.
 
 Choose one of these installation methods:
 
@@ -186,6 +186,19 @@ time:
     timezone: "YourTimezone"  # e.g., "Europe/Berlin"
 ```
 
+#### API Encryption Key
+Generate a secure API encryption key and add it to your `secrets.yaml`:
+```yaml
+# In secrets.yaml
+api_encryption_key: "YOUR_GENERATED_API_ENCRYPTION_KEY"
+```
+Then reference it in your main YAML:
+```yaml
+api:
+  encryption:
+    key: !secret api_encryption_key
+```
+
 ### Step 5: Flash ESP32
 
 1. **Connect ESP32** to your computer via USB
@@ -202,13 +215,13 @@ time:
 4. **Search for "ESPHome"**
 5. **Enter device IP address** (shown in ESP Home dashboard)
 6. **Enter API encryption key** from your secrets file
-7. **Enable API Actions** (required for v2.2.1):
+7. **Enable API Actions** (required for v2.3.5):
    - Click the "configure" button on the ESPHome integration
    - Check "Allow the device to perform Home Assistant actions"
    - Click "submit"
 8. **Click "Finish"**
 
-### Step 7: Configure Home Assistant Automations (v2.2.1)
+### Step 7: Configure Home Assistant Automations (v2.3.5)
 
 Create these automations for optimal status monitoring:
 
@@ -222,11 +235,11 @@ automation:
         to: "FAILED/WAITING"
     condition:
       - condition: template
-        value_template: "{{ states('sensor.price_update_retry_count') | int >= 3 }}"
+        value_template: "{{ states('sensor.daily_price_update_attempts') | int >= 3 }}"
     action:
       - service: notify.persistent_notification
-        data:
-          title: "⚠️ Electricity Price Update Failed"
+        data "⚠️ Electricity Price Update Failed:
+          title:"
           message: |
             Critical: Electricity price updates have failed after 3 attempts.
             Last successful update: {{ states('sensor.last_price_update_time') }}
@@ -238,16 +251,32 @@ automation:
             - Home Assistant integration
 ```
 
+#### Price Status Monitoring
+```yaml
+automation:
+  - alias: "Electricity Price Status Change"
+    trigger:
+      - platform: state
+        entity_id: sensor.current_price_status
+    action:
+      - service: logbook.log
+        data:
+          name: "Price Status"
+          message: "Current price status changed to: {{ states('sensor.current_price_status') }}"
+```
+
 #### Status Dashboard Card
 ```yaml
 type: entities
 entities:
   - entity: sensor.price_update_status
     name: Update Status
-  - entity: sensor.price_update_retry_count  
-    name: Retry Attempts
+  - entity: sensor.daily_price_update_attempts  
+    name: Daily Update Attempts
   - entity: sensor.last_price_update_time
     name: Last Update Time
+  - entity: sensor.current_price_status
+    name: Price Status
   - entity: sensor.price_status_message
     name: Status Message
 title: Electricity Price Update Status
@@ -317,11 +346,17 @@ After successful setup, these sensors will be available in Home Assistant:
 |-------------|-------------|-------|
 | `Current Max Hourly Price Percentage` | Current price as % of today's max | 0-100% |
 
+### 🆕 New Diagnostic Sensors (v2.3.5)
+| Sensor Name | Description | Use Case |
+|-------------|-------------|----------|
+| `Daily Price Update Attempts` | Number of update attempts (midnight reset) | Daily diagnostics |
+| `Current Price Status` | Valid/Missing indicator | Data integrity check |
+
 ### 🆕 Status Monitoring Sensors (v2.2.1)
 | Sensor Name | Description | Use Case |
 |-------------|-------------|----------|
 | `Price Update Status` | SUCCESS/FAILED/WAITING status | Dashboard monitoring |
-| `Price Update Retry Count` | Current retry attempt (unlimited) | Troubleshooting |
+| `Price Update Retry Count` | Current retry attempt (legacy, use Daily Price Update Attempts) | Troubleshooting |
 | `Last Price Update Time` | Timestamp of last update | Historical tracking |
 | `Price Update Status Message` | Detailed status description | Error diagnosis |
 
@@ -347,11 +382,11 @@ The electricity price calculation includes provider fees and VAT. Modify these v
 ```yaml
 // 1. Provider Fee Percentage (e.g., 0.12 = 12% fee)
 // Adjust according to your electricity provider's markup
-const float PROVIDER_FEE = 0.12; 
+const double PROVIDER_FEE = 0.12; 
 
 // 2. VAT Percentage (e.g., 0.22 = 22% VAT)
 // Adjust according to your country's VAT rate
-const float VAT_RATE = 0.22;
+const double VAT_RATE = 0.22;
 ```
 
 **Example calculations:**
@@ -362,7 +397,16 @@ const float VAT_RATE = 0.22;
 
 ### Update Schedule
 
-#### Version 2.2.1 (Bulletproof Retry)
+#### Version 2.3.5 (Precision & Reliability)
+- **Every 15 minutes**: Sensor value updates
+- **0:00:30 AM daily**: Bulletproof price update with enhanced retry logic
+- **Enhanced retry timing**: Midnight (00:00:30), every 5 minutes, boot recovery (45s)
+- **Unlimited retry**: Continuous attempts until successful
+- **Data freshness check**: Skip updates if data is less than 1 hour old
+- **Data integrity**: NAN initialization for missing data reporting
+- **Precision calculations**: Double precision math for accurate averages
+
+#### Version 2.2.1 (Bulletproof Retry) - LEGACY
 - **Every 15 minutes**: Sensor value updates
 - **0:00:30 AM daily**: Bulletproof price update with enhanced retry logic
 - **Enhanced retry timing**: Midnight (00:00:30), every 5 minutes, boot recovery (45s)
@@ -388,11 +432,11 @@ const float VAT_RATE = 0.22;
 - **Every 15 minutes**: Sensor value updates
 - **0:00 AM and 2:00 AM (as a fallback) daily**: New market data fetch
 
-To modify timing, edit the time section:
+To modify timing,:
 
 ```yaml
 time:
-  - platform: homeassistant
+  - edit the time section platform: homeassistant
     id: ha_time
     timezone: "YourTimezone"
     on_time:
@@ -409,21 +453,35 @@ time:
             - script.execute: smart_price_update
 ```
 
-### 🆕 Smart Retry Configuration (v2.2.1)
+### 🆕 Precision Configuration (v2.3.5)
 
-Customize retry behavior by modifying these globals:
+Customize precision and data handling by modifying these values:
+
+```yaml
+// Precision constants (v2.3.5 - Double Precision)
+const double PROVIDER_FEE = 0.12;   // Provider markup percentage
+const double VAT_RATE = 0.22;       // VAT percentage
+const double MULT = (1.0 + PROVIDER_FEE) * (1.0 + VAT_RATE); // Combined multiplier
+
+// Data integrity: Price vectors initialized with NAN
+std::vector<float> n_kwh(96, NAN);  // Ensures missing data reports as unavailable
+```
+
+### 🆕 Diagnostic Configuration (v2.3.5)
+
+Customize diagnostic behavior:
 
 ```yaml
 globals:
-  # Retry count tracking (no hard limit in v2.2.1)
+  # Daily update attempts tracking (midnight reset in v2.3.5)
   - id: retry_count
     type: int
     initial_value: '0'
   
-  # Data freshness threshold in seconds (default: 3600 = 1 hour)
-  - id: last_successful_update
-    type: time_t
-    initial_value: '0'
+  # Current price status string (Valid/Missing)
+  - id: current_price_status_str
+    type: std::string
+    initial_value: '"Initializing..."'
 ```
 
 ## 🤖 Home Assistant Automation Examples
@@ -531,13 +589,29 @@ automation:
           {% endif %}
 ```
 
-### 🆕 6. Smart Retry Status Monitoring (v2.2.1)
+### 🆕 6. Price Status Monitoring (v2.3.5)
+```yaml
+automation:
+  - alias: "Price Data Integrity Check"
+    trigger:
+      - platform: state
+        entity_id: sensor.current_price_status
+    condition:
+      - condition: template
+        value_template: "{{ states('sensor.current_price_status') == 'Missing' }}"
+    action:
+      - service: notify.persistent_notification
+        data:
+          title: "⚠️ Price Data Missing"
+          message: "Current electricity price data is missing. System will retry automatically."
+
+### 🆕 7. Daily Update Attempts Alert (v2.3.5)
 ```yaml
 automation:
   - alias: "Price Update Retry Notification"
     trigger:
       - platform: state
-        entity_id: sensor.price_update_retry_count
+        entity_id: sensor.daily_price_update_attempts
     condition:
       - condition: template
         value_template: "{{ trigger.to_state.state | int >= 5 }}"
@@ -546,9 +620,9 @@ automation:
         data:
           title: "🔄 Price Update Retry Attempts"
           message: |
-            Update attempt {{ states('sensor.price_update_retry_count') }} in progress.
-            Current status: {{ states('sensor.price_status_message') }}
-            System will continue retrying until successful.
+            Update attempt {{ states('sensor.daily_price_update_attempts') }} in progress.
+            Current status:.price_status_message') }}
+            System will {{ states('sensor continue retrying until successful.
 ```
 
 ## 🔧 Troubleshooting
@@ -571,6 +645,7 @@ automation:
 - Ensure internet connectivity from ESP32
 - Check ESP Home logs for API error messages
 - Verify token is approved (may take up to 24 hours)
+- **v2.3.5**: Check `Current Price Status` sensor for Valid/Missing indication
 
 #### 3. Home Assistant Not Finding Device
 **Symptoms**: Integration setup fails, can't connect to ESP32
@@ -581,7 +656,7 @@ automation:
 - Verify API encryption key matches exactly
 - Restart ESP32 and Home Assistant
 
-#### 4. Version 2.2.1: ESPHome Version Error
+#### 4. Version 2.3.5: ESPHome Version Error
 **Symptoms**: Configuration error about API actions not supported
 **Solutions**:
 - **Upgrade ESPHome to version 2025.12.0 or later**
@@ -589,7 +664,7 @@ automation:
 - Python: Run `pip install --upgrade esphome`
 - Home Assistant Add-on: Update to latest version
 
-#### 5. Version 2.2.1: Status Sensors Not Appearing
+#### 5. Version 2.3.5: Status Sensors Not Appearing
 **Symptoms**: Status monitoring sensors missing in Home Assistant
 **Solutions**:
 - Ensure API actions are enabled in ESPHome integration
@@ -597,39 +672,50 @@ automation:
 - Verify ESPHome device is connected and online
 - Check ESPHome logs for API action errors
 
-#### 6. Version 2.2.1: Midnight Update Issues (COMPLETELY FIXED)
-**Symptoms**: Automatic price updates failing after midnight
-**Root Causes Fixed**:
-- **Nested Trigger Bug**: Fixed on_time primary fetch nested inside /15 minute interval at 00:00:01
-- **Clock Jitter Issues**: Hour == 0 && minute == 0 check failing due to clock jitter/API latency
-- **Retry Deadlock**: Backup retries only activated if retry_count > 0, preventing retries after primary failure
-
+#### 6. Version 2.3.5: Inaccurate Average Price
+**Symptoms**: Daily average price shows rounding errors or incorrect values
 **Solutions**:
-- **Update to v2.2.1**: All midnight automation issues completely eliminated
-- **30-Second Buffer**: Primary midnight fetch now at 00:00:30 for proper HA/ESP32 clock synchronization
-- **State-Driven Retry**: New trigger every 5 minutes checking last_update_success boolean
-- **Explicit Reset Logic**: Proper reset of last_update_success flag at midnight
-- **Automatic Recovery**: Device recovers from midnight failures, network drops, or API timeouts
-- **Enhanced Update Verification**: Now checks if avg_price > 0 for immediate status feedback
+- **v2.3.5 Fix**: Double precision math now used for all calculations
+- Verify provider fee and VAT rate settings are correct
+- Check if your area uses different currency
+- Review logs for precision calculation messages
 
-#### 8. Smart Retry Not Working
+#### 7. Version 2.3.5: Race Condition on Time Sensors
+**Symptoms**: Time sensors show "00:00" or "Unknown" states
+**Solutions**:
+- **v2.3.5 Fix**: Race condition on stat sensors has been resolved
+- Ensure device has time synchronization from Home Assistant
+- Check ESPHome logs for update sequence messages
+- Force update time sensors using the button
+
+#### 8. Version 2.3.5: Missing Data Issues
+**Symptoms**: Price sensors show unavailable or NAN values
+**Solutions**:
+- **v2.3.5 Feature**: Forward-Fill XML parsing handles data gaps
+- Check `Current Price Status` sensor for Valid/Missing indication
+- Verify ENTSO-E API is returning complete data
+- Review logs for parsing success/failure messages
+- NAN initialization ensures missing data reports correctly as unavailable
+
+#### 9. Smart Retry Not Working
 **Symptoms**: No automatic retries, status always shows failed
 **Solutions**:
 - Verify Home Assistant API actions are enabled
 - Check network connectivity between ESP32 and HA
 - Review ESPHome logs for retry logic messages
 - Test manual force update button
-- **v2.2.1**: Enhanced retry timing provides bulletproof resilience
+- **v2.3.5**: Enhanced retry timing with Daily Price Update Attempts tracking
 
-#### 9. Inaccurate Price Calculations
+#### 10. Inaccurate Price Calculations
 **Symptoms**: Prices seem wrong compared to official sources
 **Solutions**:
 - Adjust provider fee percentage in YAML
 - Verify VAT rate for your country
 - Check if your area uses different currency
 - Consider transmission/distribution fees
+- **v2.3.5**: Double precision math eliminates rounding errors
 
-#### 10. ESP32 Restarts or Crashes
+#### 11. ESP32 Restarts or Crashes
 **Symptoms**: Device disconnects frequently, logs show watchdog resets
 **Solutions**:
 - Check power supply (use quality USB cable)
@@ -655,13 +741,16 @@ Common log messages and their meanings:
 ✅ **Good**: Data fetched successfully
 
 **[INFO][entsoe]: Price update SUCCESS after 0 attempts**
-✅ **Version 2.2.1**: Enhanced retry logic succeeded on first attempt
+✅ **Version 2.3.5**: Enhanced retry logic succeeded on first attempt
+
+**[INFO][entsoe]: Forward-fill applied for missing positions X-Y**
+✅ **Version 2.3.5**: Forward-Fill algorithm handled data gaps
 
 **[WARN][entsoe]: Failed to parse prices. Found only 45 points.**
-⚠️ **Warning**: Incomplete data, may be temporary API issue
+⚠️ **Warning**: Incomplete data, Forward-Fill will attempt recovery
 
 **[WARN][entsoe]: Failed (Attempt 1)**
-⚠️ **Version 2.2.1**: Smart retry in progress, will retry automatically every 5 minutes
+⚠️ **Version 2.3.5**: Smart retry in progress, will retry automatically every 5 minutes
 
 **[WARN][entsoe]: HTTP Request failed. Code: 401**
 ❌ **Error**: API authentication failed, check token
@@ -670,31 +759,47 @@ Common log messages and their meanings:
 ⚠️ **Warning**: Rate limit exceeded, too many requests
 
 **[INFO][entsoe]: Midnight Reset**
-✅ **Version 2.2.1**: Proper midnight state reset at 00:00:30
+✅ **Version 2.3.5**: Proper midnight state reset at 00:00:30
 
-## 🆕 Version 2.2.1 Migration Guide
+**[INFO][entsoe]: Current Price Status: Valid/Missing**
+✅ **Version 2.3.5**: New status indicator working correctly
+
+## 🆕 Version 2.3.5 Migration Guide
+
+### Upgrading from Version 2.2.1
+
+1. **Forward-Fill Parsing**: Enhanced XML parsing handles data compression gaps automatically
+2. **Double Precision Math**: Daily average price calculations now use double precision for accuracy
+3. **New Sensors**: Daily Price Update Attempts and Current Price Status sensors added
+4. **Race Condition Fix**: Time sensors no longer show "00:00" or "Unknown" states
+5. **Drop-in replacement**: Simply replace YAML file with v2.3.5 version
+6. **No configuration changes**: All existing settings remain compatible
+7. **Better data integrity**: NAN initialization ensures missing data reports correctly
 
 ### Upgrading from Version 2.1.0
 
-1. **CRITICAL FIXES**: Midnight automation and retry deadlock issues resolved
-2. **Drop-in replacement**: Simply replace YAML file with v2.2.1 version
-3. **No configuration changes**: All existing settings remain compatible
-4. **Better reliability**: Bulletproof timing prevents any transient failures
-5. **Enhanced status reporting**: Proper SUCCESS/FAILED/WAITING status display
+1. **CRITICAL FIXES**: All midnight automation and retry issues resolved in previous versions
+2. **Enhanced Precision**: Double precision math eliminates rounding errors
+3. **Improved Diagnostics**: New status sensors for better monitoring
+4. **Drop-in replacement**: Simply replace YAML file with v2.3.5 version
+5. **No configuration changes**: All existing settings remain compatible
 
 ### Upgrading from Version 2.0.0
 
 1. **CRITICAL FIX**: The midnight update automation defect is completely resolved
-2. **Drop-in replacement**: Simply replace YAML file with v2.2.1 version
-3. **No configuration changes**: All existing settings remain compatible
-4. **Better reliability**: Enhanced retry timing prevents transient failures
+2. **Enhanced Precision**: Double precision math eliminates rounding errors
+3. **Improved Diagnostics**: New status sensors for better monitoring
+4. **Drop-in replacement**: Simply replace YAML file with v2.3.5 version
+5. **No configuration changes**: All existing settings remain compatible
 
-### Breaking Changes in v2.2.1
-- **Requires ESPHome 2025.12.0+**
+### Breaking Changes in v2.3.5
+
+- **Requires ESPHome 2025.12.0+** (same as v2.2.1)
+- **New sensors added**: Daily Price Update Attempts, Current Price Status
+- **Legacy sensor deprecated**: Price Update Retry Count (use Daily Price Update Attempts)
 - **Enhanced update schedule** (midnight at 00:00:30 with 5-minute retries)
-- **New status sensors** require HA configuration
 - **API actions must be enabled** for full functionality
-- **Enhanced retry timing**: Improved midnight automation with 30-second buffer
+- **Data integrity**: Missing data now reports as "unavailable" instead of 0.0
 
 ## 📈 Data Source Information
 
@@ -714,6 +819,7 @@ The data comes from the ENTSO-E (European Network of Transmission System Operato
 - **Accuracy**: Official market prices from TSOs
 - **Reliability**: High availability (>99%)
 - **Coverage**: 35+ European countries and regions
+- **v2.3.5 Enhancement**: Forward-Fill algorithm handles data compression gaps
 
 ## 🔒 Security Considerations
 
@@ -735,11 +841,11 @@ The data comes from the ENTSO-E (European Network of Transmission System Operato
 - **Regularly update** Home Assistant
 - **Review automation permissions** regularly
 
-### Version 2.2.1 Additional Security
+### Version 2.3.5 Additional Security
 - **API Actions**: Only enable if needed for status monitoring
 - **Status Sensors**: Monitor access to update status information
 - **Bidirectional Communication**: Review HA automation permissions
-- **Enhanced Retry Logic**: Bulletproof fault tolerance for automatic recovery
+- **Enhanced Data Integrity**: NAN initialization prevents false data reporting
 
 ## 🚀 Advanced Features
 
@@ -749,6 +855,7 @@ You can modify the price calculation logic in the script section to include:
 - **Peak/off-peak multipliers**
 - **Grid stability fees**
 - **Renewable energy certificates**
+- **Custom precision requirements** (v2.3.5 uses double precision)
 
 ### External Data Integration
 The JSON hourly prices sensor can be integrated with:
@@ -775,44 +882,47 @@ std::string url = "https://web-api.tp.entsoe.eu/api?securityToken=" + id(api_tok
                   "&out_Domain="+ id(selected_area_code);
 ```
 
-### Version 2.2.1 Advanced Features
+### Version 2.3.5 Advanced Features
 
-#### Bulletproof Retry Customization
+#### Forward-Fill Customization
 ```yaml
-# Custom retry timing
-script:
-  - id: smart_price_update
-    then:
-      # Modify retry delays
-      - delay: 300s  # 5 minutes instead of default
-      # Custom retry behavior
-      - lambda: id(retry_count) = 0; // Reset counter if needed
+# Custom forward-fill behavior
+// Forward-Fill is automatic in v2.3.5
+// Missing sequential data points are filled with last known value
+// This handles ENTSO-E data compression transparently
 ```
 
-#### Enhanced Status Monitoring
+#### Precision Settings
 ```yaml
-# Add custom status sensors
+// Double precision constants for accurate calculations
+const double PROVIDER_FEE = 0.12;   // Adjust as needed
+const double VAT_RATE = 0.22;       // Adjust for your country
+const double MULT = (1.0 + PROVIDER_FEE) * (1.0 + VAT_RATE);
+```
+
+#### Enhanced Diagnostics
+```yaml
+# Add custom diagnostic sensors
 - platform: template
-  name: "System Uptime"
-  lambda: return id(ha_time).now().timestamp - id(last_successful_update);
+  name: "Data Completeness Percentage"
+  lambda: return (96.0 - count_nan_values) / 96.0 * 100.0;
   
 - platform: template
-  name: "API Response Quality"
-  lambda: return id(retry_count) == 0 ? "Excellent" : "Retrying";
+  name: "Parsing Method"
+  lambda: return std::isnan(initial_values[0]) ? "Forward-Fill Used" : "Direct Parse";
 ```
 
 ## 📝 Changelog
 
 See [CHANGELOG.md](CHANGELOG.md) for detailed version history and new features.
 
-### Version 2.2.1 Highlights
-- **🔥 CRITICAL FIXES**: Midnight automation and retry deadlock completely resolved
-- **Enhanced Midnight Logic**: Fixed timing at 00:00:30 with proper state management
-- **Bulletproof Retry Logic**: Every 5 minutes with smart success checking
-- **Status Monitoring**: Real-time update status and retry tracking
-- **Bidirectional Communication**: Home Assistant integration for status verification
-- **Data Freshness Check**: Prevents unnecessary API calls
-- **Critical Failure Detection**: Automatic alerts for system issues
+### Version 2.3.5 Highlights
+- **🔥 CRITICAL FIXES**: Forward-Fill XML parsing, Double precision math, Race condition fix
+- **🆕 Enhanced Diagnostics**: Daily Price Update Attempts, Current Price Status
+- **Data Integrity**: NAN initialization ensures missing data reports correctly
+- **Precision**: Double precision math eliminates rounding errors in average price
+- **Robustness**: Forward-Fill algorithm handles all ENTSO-E data formats
+- **Production Ready**: Complete reliability improvements for data accuracy
 
 ## 🤝 Contributing
 
@@ -822,8 +932,8 @@ Contributions are welcome! Please feel free to submit:
 - **Country code updates** if you find missing areas
 - **Documentation improvements** for clarity
 - **Code optimizations** for performance
-- **Smart retry enhancements** for better reliability
-- **Midnight automation enhancements** (following v2.2.1 fixes)
+- **Precision improvements** for better calculations
+- **Parsing enhancements** for robust data handling
 
 ### Development Setup
 1. Fork the repository
@@ -847,28 +957,30 @@ This project is open source and available under the MIT License. You are free to
 2. **Review ESP Home logs** for error messages
 3. **Verify API token** on ENTSO-E transparency platform
 4. **Test network connectivity** from ESP32
-5. **Check ESPHome version** (v2.2.1 requires 2025.12.0+)
+5. **Check ESPHome version** (v2.3.5 requires 2025.12.0+)
+6. **Monitor new v2.3.5 sensors** for diagnostic information
 
 ### Community Resources
 - **ESP Home Discord**: Real-time help from developers
 - **Home Assistant Community Forum**: Automation examples
 - **ENTSO-E API Documentation**: Official API reference
 
-### Version 2.2.1 Specific Support
-- **Midnight Automation**: Bulletproof fix implemented
-- **ESPHome Compatibility**: Ensure version 2025.12.0 or later
-- **Status Monitoring**: Verify API actions are enabled in HA
+### Version 2.3.5 Specific Support
+- **Forward-Fill Parsing**: Check logs for forward-fill application messages
+- **Precision Calculations**: Verify double precision math in average price
+- **Status Sensors**: Monitor Daily Price Update Attempts and Current Price Status
+- **Data Integrity**: Use NAN initialization for missing data detection
 
 ## 🏷️ Project Information
 
-- **Version**: 2.2.1
-- **Last Updated**: December 21, 2025
+- **Version**: 2.3.5
+- **Last Updated**: December 23, 2025
 - **Compatibility**: 
-  - ESP Home 2025.12.0+ (v2.2.1)
+  - ESP Home 2025.12.0+ (v2.2.1+)
   - ESP Home 2024.1+ (v1.0.0)
   - Home Assistant 2023.1+
 - **License**: MIT
-- **Author**: Legolas-2025 with AI assistance
+- **Author**: Legolas-2025 with community contributions and AI assistance
 
 **Happy monitoring!** ⚡📊
 
