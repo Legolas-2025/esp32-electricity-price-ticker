@@ -12,7 +12,7 @@
 
 This **ESP32 Electricity Price Ticker** is a real-time electricity price monitoring solution for smart homes. It fetches real-time electricity prices from the ENTSO-E API, adds relevant VAT/fees, and provides comprehensive smart price sensors for Home Assistant automation. It is perfect for optimizing electricity costs and smart home energy management across **35+ European countries**. Inspired by the [hass-entso-e project](https://github.com/JaccoR/hass-entso-e), this ESP32 hardware version offers enhanced reliability and offline recovery capabilities.
 
-For detailed documentation, FAQ and troubleshooting, visit our 📖 [Wiki Home Page](https://github.com/Legolas-2025/esp32-electricity-price-ticker/wiki/Home).
+For detailed documentation, FAQ and troubleshooting, visit our 📖 [Wiki Home Page](https://github.com/Legolas-2025/esp32-electricity-price-ticker/wiki/1-Home).
 
 🚀 **v2.3.5 Features:**
 - **FIXED: Forward-Fill XML Parsing** - Handles ENTSO-E data compression gaps reliably
@@ -98,7 +98,7 @@ For detailed documentation, FAQ and troubleshooting, visit our 📖 [Wiki Home P
    - Log into your account
    - Navigate to API documentation section
    - Generate a new security token
-   - **Save this token** - you'll need it for configuration
+   - **Save this token** - you'll need to paste it into the YAML file
 
 > **Note**: The ENTSO-E API is free but requires registration. Tokens are typically approved within 24 hours.
 
@@ -151,55 +151,148 @@ esphome dashboard
    - Click "NEW PROJECT"
    - Enter project name (e.g., "electricity-prices")
 
-2. **Configure YAML**
-   - Copy the content from `entsoe-hass-compatible.yaml`
-   - Paste into your new project
-   - Save the file
+2. **Download Configuration**
+   - Download `entsoe-hass-compatible.yaml` from GitHub releases
+   - Save it to your ESPHome project directory
 
 3. **Create Secrets File**
    - Create `secrets.yaml` in the same directory
-   - Copy content from `secrets_template.yaml`
-   - Replace placeholder values with your actual data
+   - Add only WiFi credentials (see Section 4 below)
 
-### Step 4: Customize Configuration
+### Step 4: Credential Configuration
 
-#### WiFi Configuration
+This section explains where to store each credential. The configuration uses a hybrid approach:
+
+#### Where Credentials Are Stored
+
+**secrets.yaml (WiFi Only):**
+The following credentials go in the secrets.yaml file:
+
 ```yaml
-wifi:
-  ssid: "YourWiFiNetworkName"
-  password: "YourWiFiPassword"
+# secrets.yaml
+wifi_ssid: "YourWiFiNetworkName"
+wifi_password: "YourWiFiPassword"
 ```
 
-#### Country Selection
-Find your country area code from the list below and update:
+**Main YAML File (Edit Directly):**
+The following placeholders must be replaced directly in the main YAML file by editing the file in a text editor:
+
+| Placeholder | Location in YAML | What to Enter |
+|-------------|------------------|---------------|
+| `YOUR_API_ENCRYPTION_KEY_HERE` | Line 29 (api.encryption.key) | Your ESP Home generated 32-character key |
+| `YOUR_ENTSOE_API_TOKEN_HERE` | Line 343 (globals.api_token) | Your ENTSO-E API token |
+| `YOUR_COUNTRY_AREA_CODE_HERE` | Line 346 (globals.area_code) | Your country code from the list below |
+| `YOUR_TIMEZONE_HERE` | Line 247 (time.timezone) | Your timezone string |
+
+#### Creating secrets.yaml
+
+Create a `secrets.yaml` file in your ESPHome project directory:
+
 ```yaml
-- id: area_code
-  type: std::string
-  initial_value: '"YOUR_COUNTRY_AREA_CODE_HERE"'
+# secrets.yaml - WiFi credentials only
+wifi_ssid: "YourWiFiNetworkName"
+wifi_password: "YourWiFiPassword"
 ```
 
-#### Timezone Setting
-```yaml
-time:
-  - platform: homeassistant
-    id: ha_time 
-    timezone: "YourTimezone"  # e.g., "Europe/Berlin"
-```
+#### Editing the Main YAML File
 
-#### API Encryption Key
-Generate a secure API encryption key and add it to your `secrets.yaml`:
-```yaml
-# In secrets.yaml
-api_encryption_key: "YOUR_GENERATED_API_ENCRYPTION_KEY"
-```
-Then reference it in your main YAML:
+Open `entsoe-hass-compatible.yaml` in a text editor and replace these placeholders:
+
+**1. API Encryption Key (Line 29):**
 ```yaml
 api:
   encryption:
-    key: !secret api_encryption_key
+    key: "YOUR_API_ENCRYPTION_KEY_HERE"  # Replace with your key
 ```
 
-### Step 5: Flash ESP32
+**2. Timezone (Line 247):**
+```yaml
+time:
+  - platform: homeassistant
+    id: ha_time
+    timezone: "Europe/Berlin"  # Replace with your timezone
+```
+
+**3. ENTSO-E API Token (Lines 341-343):**
+```yaml
+globals:
+  - id: api_token
+    type: std::string
+    initial_value: '"YOUR_ENTSOE_API_TOKEN_HERE"'  # Paste your token here
+```
+
+**4. Country Area Code (Lines 344-346):**
+```yaml
+  - id: area_code
+    type: std::string
+    initial_value: '"YOUR_COUNTRY_AREA_CODE_HERE"'  # Your country code
+```
+
+### Step 5: Find Your Country Area Code
+
+Select your country's area code from this list and replace `YOUR_COUNTRY_AREA_CODE_HERE`:
+
+| Country | Area Code |
+|---------|-----------|
+| Austria | `10YAT-APG------L` |
+| Belgium | `10YBE----------2` |
+| Bulgaria | `10YCA-BULGARIA-R` |
+| Croatia | `10YHR-HEP------M` |
+| Czech Republic | `10YCZ-CEPS-----N` |
+| Denmark | `10YDK-1--------A` |
+| Estonia | `10YEE-1--------U` |
+| Finland | `10YFI-1--------U` |
+| France | `10YFR-RTE------B` |
+| Germany | `10YDE-RENEW----U` |
+| Great Britain | `10YGB----------A` |
+| Greece | `10YGR-HTSO-----Y` |
+| Hungary | `10YHU-MAVIR----U` |
+| Ireland | `10YIE-1--------U` |
+| Italy | `10YIT-GRTN-----B` |
+| Latvia | `10YLV-1--------S` |
+| Lithuania | `10YLT-1001A0008Y` |
+| Luxembourg | `10YLU-CEGEDEL-NQ` |
+| Netherlands | `10YNL----------L` |
+| Norway | `10YNO-1--------2` |
+| Poland | `10YPL-AREA-----S` |
+| Portugal | `10YPT-REN------W` |
+| Romania | `10YRO-TEL------P` |
+| Serbia | `10YRS-SRB-------` |
+| Slovakia | `10YSK-SEPS-----K` |
+| Slovenia | `10YSI-ELES-----O` |
+| Spain | `10YES-REE------M` |
+| Sweden | `10YSE-1--------K` |
+| Switzerland | `10YCH-SWISSGRIDZ` |
+
+### Step 6: Generate API Encryption Key
+
+The Home Assistant API requires an encryption key. Generate one using:
+
+**Option A: ESPHome Dashboard**
+1. When creating the project, ESPHome will prompt you to generate a key
+2. Copy the generated key and paste it into line 29 of the YAML
+
+**Option B: Command Line**
+```bash
+python3 -c "import os; print(os.urandom(24).hex())"
+```
+
+**Option C: Online Generator**
+Use any 32-character hex string generator
+
+### Step 7: Set Your Timezone
+
+Replace `YOUR_TIMEZONE_HERE` on line 247 with your timezone string:
+
+| Region | Example Timezone |
+|--------|------------------|
+| Central Europe | `Europe/Berlin` |
+| Western Europe | `Europe/Paris` |
+| Eastern Europe | `Europe/Warsaw` |
+| Nordic | `Europe/Stockholm` |
+| UK | `Europe/London` |
+
+### Step 8: Flash ESP32
 
 1. **Connect ESP32** to your computer via USB
 2. **Click "Install"** in ESP Home dashboard
@@ -207,21 +300,21 @@ api:
 4. **Wait for compilation and upload** (2-5 minutes)
 5. **Note the device IP address** shown after successful upload
 
-### Step 6: Add to Home Assistant
+### Step 9: Add to Home Assistant
 
 1. **Open Home Assistant**
 2. **Go to Configuration > Integrations**
 3. **Click "Add Integration"**
 4. **Search for "ESPHome"**
 5. **Enter device IP address** (shown in ESP Home dashboard)
-6. **Enter API encryption key** from your secrets file
+6. **Enter API encryption key** that you generated and put in the YAML (line 29)
 7. **Enable API Actions** (required for v2.3.5):
    - Click the "configure" button on the ESPHome integration
    - Check "Allow the device to perform Home Assistant actions"
    - Click "submit"
 8. **Click "Finish"**
 
-### Step 7: Configure Home Assistant Automations (v2.3.5)
+### Step 10: Configure Home Assistant Automations (v2.3.5)
 
 Create these automations for optimal status monitoring:
 
@@ -238,13 +331,13 @@ automation:
         value_template: "{{ states('sensor.daily_price_update_attempts') | int >= 3 }}"
     action:
       - service: notify.persistent_notification
-        data "⚠️ Electricity Price Update Failed:
-          title:"
+        data:
+          title: "⚠️ Electricity Price Update Failed"
           message: |
             Critical: Electricity price updates have failed after 3 attempts.
             Last successful update: {{ states('sensor.last_price_update_time') }}
             Status: {{ states('sensor.price_update_status_message') }}
-            
+
             Please check:
             - ESPHome device connectivity
             - ENTSO-E API availability
@@ -271,7 +364,7 @@ type: entities
 entities:
   - entity: sensor.price_update_status
     name: Update Status
-  - entity: sensor.daily_price_update_attempts  
+  - entity: sensor.daily_price_update_attempts
     name: Daily Update Attempts
   - entity: sensor.last_price_update_time
     name: Last Update Time
@@ -356,7 +449,7 @@ After successful setup, these sensors will be available in Home Assistant:
 | Sensor Name | Description | Use Case |
 |-------------|-------------|----------|
 | `Price Update Status` | SUCCESS/FAILED/WAITING status | Dashboard monitoring |
-| `Price Update Retry Count` | Current retry attempt (legacy, use Daily Price Update Attempts) | Troubleshooting |
+| `Price Update Retry Count` | Current retry attempt (legacy) | Troubleshooting |
 | `Last Price Update Time` | Timestamp of last update | Historical tracking |
 | `Price Update Status Message` | Detailed status description | Error diagnosis |
 
@@ -382,11 +475,11 @@ The electricity price calculation includes provider fees and VAT. Modify these v
 ```yaml
 // 1. Provider Fee Percentage (e.g., 0.12 = 12% fee)
 // Adjust according to your electricity provider's markup
-const double PROVIDER_FEE = 0.12; 
+const double PROV_FEE = 0.12;
 
 // 2. VAT Percentage (e.g., 0.22 = 22% VAT)
 // Adjust according to your country's VAT rate
-const double VAT_RATE = 0.22;
+const double VAT_R = 0.22;
 ```
 
 **Example calculations:**
@@ -432,11 +525,11 @@ const double VAT_RATE = 0.22;
 - **Every 15 minutes**: Sensor value updates
 - **0:00 AM and 2:00 AM (as a fallback) daily**: New market data fetch
 
-To modify timing,:
+To modify timing, edit the time section:
 
 ```yaml
 time:
-  - edit the time section platform: homeassistant
+  - platform: homeassistant
     id: ha_time
     timezone: "YourTimezone"
     on_time:
@@ -459,9 +552,9 @@ Customize precision and data handling by modifying these values:
 
 ```yaml
 // Precision constants (v2.3.5 - Double Precision)
-const double PROVIDER_FEE = 0.12;   // Provider markup percentage
-const double VAT_RATE = 0.22;       // VAT percentage
-const double MULT = (1.0 + PROVIDER_FEE) * (1.0 + VAT_RATE); // Combined multiplier
+const double PROV_FEE = 0.12;   // Provider markup percentage
+const double VAT_R = 0.22;       // VAT percentage
+const double MULT = (1.0 + PROV_FEE) * (1.0 + VAT_R); // Combined multiplier
 
 // Data integrity: Price vectors initialized with NAN
 std::vector<float> n_kwh(96, NAN);  // Ensures missing data reports as unavailable
@@ -477,7 +570,7 @@ globals:
   - id: retry_count
     type: int
     initial_value: '0'
-  
+
   # Current price status string (Valid/Missing)
   - id: current_price_status_str
     type: std::string
@@ -604,6 +697,7 @@ automation:
         data:
           title: "⚠️ Price Data Missing"
           message: "Current electricity price data is missing. System will retry automatically."
+```
 
 ### 🆕 7. Daily Update Attempts Alert (v2.3.5)
 ```yaml
@@ -621,8 +715,8 @@ automation:
           title: "🔄 Price Update Retry Attempts"
           message: |
             Update attempt {{ states('sensor.daily_price_update_attempts') }} in progress.
-            Current status:.price_status_message') }}
-            System will {{ states('sensor continue retrying until successful.
+            Current status: {{ states('sensor.price_status_message') }}
+            System will continue retrying until successful.
 ```
 
 ## 🔧 Troubleshooting
@@ -640,12 +734,12 @@ automation:
 #### 2. No Electricity Price Data
 **Symptoms**: Sensors show 0.0000 or "unknown"
 **Solutions**:
-- Verify ENTSO-E API token is correct and active
-- Check country area code matches your location
+- Verify ENTSO-E API token is correct in YAML (line 343)
+- Check country area code matches your location (line 346)
 - Ensure internet connectivity from ESP32
 - Check ESP Home logs for API error messages
 - Verify token is approved (may take up to 24 hours)
-- **v2.3.5**: Check `Current Price Status` sensor for Valid/Missing indication
+- **v2.3.5**: Check `Current Price Status` sensor for Valid/Missing
 
 #### 3. Home Assistant Not Finding Device
 **Symptoms**: Integration setup fails, can't connect to ESP32
@@ -653,7 +747,7 @@ automation:
 - Ensure ESP32 and Home Assistant are on same network
 - Check firewall settings on both devices
 - Try using device IP address instead of hostname
-- Verify API encryption key matches exactly
+- Verify API encryption key matches line 29 of YAML
 - Restart ESP32 and Home Assistant
 
 #### 4. Version 2.3.5: ESPHome Version Error
@@ -753,7 +847,7 @@ Common log messages and their meanings:
 ⚠️ **Version 2.3.5**: Smart retry in progress, will retry automatically every 5 minutes
 
 **[WARN][entsoe]: HTTP Request failed. Code: 401**
-❌ **Error**: API authentication failed, check token
+❌ **Error**: API authentication failed, check token (line 343)
 
 **[WARN][entsoe]: HTTP Request failed. Code: 429**
 ⚠️ **Warning**: Rate limit exceeded, too many requests
@@ -773,8 +867,9 @@ Common log messages and their meanings:
 3. **New Sensors**: Daily Price Update Attempts and Current Price Status sensors added
 4. **Race Condition Fix**: Time sensors no longer show "00:00" or "Unknown" states
 5. **Drop-in replacement**: Simply replace YAML file with v2.3.5 version
-6. **No configuration changes**: All existing settings remain compatible
-7. **Better data integrity**: NAN initialization ensures missing data reports correctly
+6. **Credential changes**: None - same credential storage approach
+7. **No configuration changes**: All existing settings remain compatible
+8. **Better data integrity**: NAN initialization ensures missing data reports correctly
 
 ### Upgrading from Version 2.1.0
 
@@ -825,7 +920,7 @@ The data comes from the ENTSO-E (European Network of Transmission System Operato
 
 ### API Token Security
 - **Never share** your ENTSO-E API token publicly
-- **Store securely** in `secrets.yaml` file
+- **Store securely** - token is in YAML file, keep file private
 - **Rotate regularly** if using extensively
 - **Monitor usage** through ENTSO-E portal
 
@@ -877,8 +972,8 @@ Modify the configuration to support multiple areas:
   initial_value: '"10YFR-RTE------B"' # France
 
 # Modify API call to use selected areas
-std::string url = "https://web-api.tp.entsoe.eu/api?securityToken=" + id(api_token) + 
-                  "&documentType=A44&in_Domain="+ id(selected_area_code) + 
+std::string url = "https://web-api.tp.entsoe.eu/api?securityToken=" + id(api_token) +
+                  "&documentType=A44&in_Domain="+ id(selected_area_code) +
                   "&out_Domain="+ id(selected_area_code);
 ```
 
@@ -895,9 +990,9 @@ std::string url = "https://web-api.tp.entsoe.eu/api?securityToken=" + id(api_tok
 #### Precision Settings
 ```yaml
 // Double precision constants for accurate calculations
-const double PROVIDER_FEE = 0.12;   // Adjust as needed
-const double VAT_RATE = 0.22;       // Adjust for your country
-const double MULT = (1.0 + PROVIDER_FEE) * (1.0 + VAT_RATE);
+const double PROV_FEE = 0.12;   // Adjust as needed
+const double VAT_R = 0.22;       // Adjust for your country
+const double MULT = (1.0 + PROV_FEE) * (1.0 + VAT_R);
 ```
 
 #### Enhanced Diagnostics
@@ -906,7 +1001,7 @@ const double MULT = (1.0 + PROVIDER_FEE) * (1.0 + VAT_RATE);
 - platform: template
   name: "Data Completeness Percentage"
   lambda: return (96.0 - count_nan_values) / 96.0 * 100.0;
-  
+
 - platform: template
   name: "Parsing Method"
   lambda: return std::isnan(initial_values[0]) ? "Forward-Fill Used" : "Direct Parse";
@@ -975,12 +1070,12 @@ This project is open source and available under the MIT License. You are free to
 
 - **Version**: 2.3.5
 - **Last Updated**: December 23, 2025
-- **Compatibility**: 
+- **Compatibility**:
   - ESP Home 2025.12.0+ (v2.2.1+)
   - ESP Home 2024.1+ (v1.0.0)
   - Home Assistant 2023.1+
 - **License**: MIT
-- **Author**: Legolas-2025 with community contributions and AI assistance
+- **Author**: Legolas-2025 with AI assistance
 
 **Happy monitoring!** ⚡📊
 
