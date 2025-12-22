@@ -368,7 +368,7 @@ button:
         - script.execute: smart_price_update
 
 # -----------------------------------------------------
-# 6. SCRIPTS (v2.3.4 - Universal EU Sync Fix)
+# 6. SCRIPTS
 # -----------------------------------------------------
 script:
   - id: smart_price_update
