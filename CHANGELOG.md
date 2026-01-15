@@ -3,9 +3,162 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.5.0] - 2026-01-15
+### 🛡️ Version 3.5.0: Reboot-Free Scheduled Updates & Pipeline Stability
+**MAJOR STABILITY RELEASE**: This version eliminates spontaneous ESP32 reboots during scheduled ENTSO-E API calls (midnight & 14:00), while preserving 100% backward compatibility with all existing sensors and Home Assistant automations from v3.1.1.
+
+The core ENTSO-E parsing logic, forward-fill algorithm, and all sensor IDs remain unchanged. Only the scheduling, execution model, and safety guards were redesigned to prevent overlapping updates and watchdog issues.
+
+### Added
+* **Safe Scheduling Flags for Today & Tomorrow Pipelines**
+  + Introduced `need_today_update` / `need_tomorrow_update` globals to **schedule** work instead of executing API calls directly inside `on_time` triggers.
+  + Added `is_updating_today` / `is_updating_tomorrow` globals as **mutual exclusion guards** to prevent overlapping updates.
+  + Ensures only one instance of the today/tomorrow update script can run at a time, even when multiple triggers fire close together (e.g. boot recovery + retry + primary schedule).
+* **Worker Tick Execution Model**
+  + New worker ticks run every 10 seconds for each pipeline:
+    - Today worker: checks `need_today_update` and starts `smart_price_update` if not already updating.
+    - Tomorrow worker: checks `need_tomorrow_update` and starts `smart_next_day_price_update` if within valid time window and not already updating.
+  + Moves the heavy HTTP + XML parsing out of `on_time` callback bodies and into a **controlled, non-overlapping execution path**.
+  + Reduces risk of watchdog resets caused by long-running operations inside ESPHome time callbacks.
+* **Manual Update Integration with Safe Scheduling**
+  + Both manual buttons now **schedule** updates via flags instead of calling scripts directly:
+    - "Entso-E Force Update" sets `need_today_update = true`.
+    - "Entso-E Force Next Day Update" sets `need_tomorrow_update = true` (time-gated after 14:00).
+  + This ensures manual, scheduled, and boot-recovery updates all share the **same safe execution pipeline** and guards.
+* **Improved Logging for Scheduling & Workers**
+  + Added clear log messages:
+    - `"Midnight - Scheduling Today's Prices"`
+    - `"Scheduling retry for Today's Price Update"`
+    - `"Boot Recovery - Scheduling Today's Prices Update"`
+    - `"14:00 - Scheduling Tomorrow's Prices"`
+    - `"Scheduling Retry for Tomorrow's Price Update"`
+    - `"Boot Recovery - Scheduling Tomorrow's Prices"`
+    - `"Worker starting Today's Price Update"`
+    - `"Worker starting Tomorrow's Price Update"`
+  + Greatly simplifies troubleshooting by showing exactly **when** updates are scheduled vs. actually started.
+
+### Changed
+* **on_time Triggers Now Only Schedule Work (No Heavy Logic Inside)**
+  + All `on_time` entries were refactored to **set flags** instead of directly executing:
+    - `script.execute: smart_price_update`
+    - `script.execute: smart_next_day_price_update`
+  + Heavy operations (HTTP requests + XML parsing) now run exclusively via worker ticks, protected by `is_updating_*` guards.
+  + Eliminates long blocking operations inside time callbacks, reducing the risk of watchdog-triggered reboots.
+* **Boot Recovery Logic Converted to Scheduling**
+  + Boot recovery for today's data:
+    - Previously: directly executed `smart_price_update` at `00:00:45` on boot.
+    - Now: sets `need_today_update = true` once per boot, and `boot_recovery_executed = true` to avoid repeats.
+  + Boot recovery for tomorrow's data:
+    - Previously: directly called `smart_next_day_price_update` if within 14:00–23:00 window.
+    - Now: sets `need_tomorrow_update = true` once per boot (within valid window), and flips `next_day_boot_recovery_executed` to prevent repeated attempts.
+  + Guarantees that boot recovery uses the same safe worker-based update path as all other triggers.
+* **Today & Tomorrow Scripts Wrapped with Re-Entrancy Guards**
+  + `smart_price_update`:
+    - Now begins with a guard:
+      ```cpp
+      if (id(is_updating_today)) {
+        ESP_LOGW("entsoe", "smart_price_update skipped: already updating today");
+        return;
+      }
+      id(is_updating_today) = true;
+      ```
+    - Ends by resetting: `id(is_updating_today) = false;`
+  + `smart_next_day_price_update`:
+    - Similar guard:
+      ```cpp
+      if (id(is_updating_tomorrow)) {
+        ESP_LOGW("entsoe", "smart_next_day_price_update skipped: already updating tomorrow");
+        return;
+      }
+      id(is_updating_tomorrow) = true;
+      ```
+    - Ends by resetting: `id(is_updating_tomorrow) = false;`
+  + Prevents accidental double invocation when multiple scheduling events fire close together.
+* **Unified Timeout Strategy for All HTTP Requests**
+  + Today’s script (`full_update_logic_script`) now also uses:
+    ```cpp
+    http.setTimeout(20000);  // 20 second timeout to avoid long blocks
+    ```
+  + Aligns with the timeout already used in the tomorrow script from v3.1.1.
+  + Ensures that **both** today and tomorrow API calls fail fast on slow responses instead of triggering watchdog resets.
+* **Robust Handling for “No Parsed Data” Scenario**
+  + After parsing XML, both pipelines now explicitly handle the case where `count == 0`:
+    - Set `last_update_success` / `next_day_last_update_success` to `false`.
+    - Set status messages to `"No data points parsed"`.
+    - Log a warning to help diagnose malformed or empty API responses.
+  + Prevents silent failure and makes it clear in Home Assistant that no valid data was received.
+
+### Fixed
+* **Spontaneous Reboots on Scheduled API Calls**
+  + Eliminated watchdog-triggered reboots observed during:
+    - Midnight daily fetch for today's prices.
+    - 14:00 next-day fetch for tomorrow's prices.
+    - Retry cycles when ENTSO-E was slow or temporarily unavailable.
+  + Root causes addressed:
+    - Long blocking HTTP + XML parsing inside `on_time` callbacks.
+    - Potential overlapping execution of update scripts from multiple triggers (primary + retry + boot recovery).
+  + With v3.5.0, scheduled updates for both pipelines can perform full 96-point updates **back-to-back** without causing a reboot.
+* **Overlapping Update Calls from Multiple Triggers**
+  + Previously, it was possible for:
+    - Midnight main trigger and retry to overlap.
+    - 14:00 main trigger, retry, and boot recovery to interleave and double-call `smart_next_day_price_update`.
+  + The new `need_*` and `is_updating_*` design ensures:
+    - At most one update per pipeline is running at any time.
+    - Additional triggers simply set the `need_*` flag, which the worker picks up once the previous update completes.
+* **Manual Updates Bypassing Safety Logic (Now Unified)**
+  + Prior behavior: manual buttons called scripts directly, sometimes taking a different code path from scheduled updates.
+  + New behavior: manual buttons share the exact same scheduling and guards:
+    - Manual today button → `need_today_update = true`.
+    - Manual tomorrow button → `need_tomorrow_update = true` (14:00–23:00 gate enforced).
+  + Guarantees consistent, safe behavior regardless of how updates are triggered.
+
+### Technical Improvements
+* **Execution Model Refactor for ESPHome Time Component**
+  + Decoupled scheduling from execution:
+    - `on_time` now only toggles flags and logs events.
+    - Worker ticks perform the actual updates under controlled conditions.
+  + Aligns with ESPHome best practices of keeping time callbacks lightweight.
+* **Improved Diagnostic Visibility**
+  + New, explicit log messages around scheduling, worker execution, and script guarding.
+  + Easier to see:
+    - When the device planned an update.
+    - When it actually started the HTTP call.
+    - Whether it skipped updates due to an existing in-progress operation.
+* **Preserved Forward-Fill & Data Integrity Logic**
+  + Forward-fill algorithm from v2.3.5 and v3.1.1 remains **unchanged**:
+    - ENTSO-E XML gaps between `<position>` values are still filled with the last known price.
+    - Trailing gaps up to position 96 are also filled.
+  + All NAN initialization and `std::isnan()` safeguards preserved for accurate min/max/avg calculations.
+
+### Compatibility
+* **ESPHome**: Requires 2025.12.0+ (same as v3.1.1)
+* **Home Assistant**: No changes required, all existing integrations and entities remain intact
+* **API**: ENTSO-E API (no changes required)
+* **Hardware**: All ESP32 boards supported; memory usage remains well within typical limits
+* **Existing Automations**:
+  + Fully compatible; all existing entity IDs and behaviors for today’s and tomorrow’s sensors are preserved.
+  + The only visible behavior change should be **increased stability** and absence of reboot-induced outages around midnight and 14:00.
+* **New Globals**:
+  + `need_today_update`, `is_updating_today`, `need_tomorrow_update`, `is_updating_tomorrow` are internal control flags and do **not** expose new HA entities.
+
+### Migration Notes
+* **Drop-in replacement for v3.1.1**
+  + Simply replace your existing v3.1.1 YAML with the v3.5.0 version.
+  + Retain your existing secrets and customization (WiFi, API token, area code, timezone, fees, VAT).
+* **No sensor or entity changes**
+  + All sensors documented in README for v3.1.1 are still present and behave the same.
+  + No renaming, removal, or type changes were made to any exposed entities.
+* **Improved Stability at Critical Times**
+  + Midnight and 14:00 updates now complete without random reboots.
+  + Today’s sensors remain continuously available even when tomorrow’s 14:00 update is running.
+* **Recommended Upgrade**
+  + Strongly recommended for anyone running v3.x who has observed:
+    - Reboots around midnight or 14:00.
+    - Temporary “all sensors unavailable” states during scheduled updates.
+
 ## [3.1.1] - 2025-12-30
 ### 🎉 Version 3.1.1: Next-Day Forecasting & Stability
-**MAJOR RELEASE**: This version introduces next-day price forecasting, complete data pipeline isolation, and significant stability improvements. Enables comparison of today's and tomorrow's prices for optimal energy consumption decisions.
+**MAJOR RELEASE**: This version introduces next-day price forecasting, complete data pipeline isolation, and significant stability improvements. Enables comparison of today's and tomorrow's prices for[...]
 
 ### Added
 * **Next-Day Price Forecasting**
@@ -278,14 +431,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   + Ensures WiFi and Home Assistant API are stable before first request
 
 ### Compatibility
-* **ESPHome**: Still requires 2025.12.0+ (same as previous versions)
+* **ESPHome**: Still requires 2025.12.0+ (same as v2.0.0)
 * **Home Assistant**: No changes required, all existing integrations work
 * **API**: ENTSO-E API (no changes required)
 * **Hardware**: All ESP32 boards (no hardware changes)
 
 ### Migration Notes
 * **No breaking changes**: All existing settings and credentials remain compatible
-* **Drop-in replacement**: Simply replace v2.1.0 YAML with v2.2.1 version
+* **Drop-in replacement**: Simply replace v2.0.0 YAML with v2.2.1 version
 * **Midnight reliability**: Complete elimination of automation failures
 * **No configuration changes**: All existing Home Assistant automations continue to work
 
@@ -467,6 +620,7 @@ Users upgrading from v1.0.0:
 ## Version History
 | Version | Date | Changes |
 | --- | --- | --- |
+| 3.5.0 | 2026-01-15 | Reboot-free scheduled updates, safe scheduling flags, worker-based execution, guarded scripts |
 | 3.1.1 | 2025-12-30 | Next-day forecasting, data pipeline isolation, watchdog protection, boot recovery, 7 new sensors |
 | 2.3.5 | 2025-12-23 | Forward-Fill parsing, double precision math, race condition fix, new diagnostic sensors |
 | 2.2.1 | 2025-12-21 | CRITICAL: Midnight automation, retry deadlock & vector comparison fixes |
@@ -482,6 +636,7 @@ For issues, feature requests, or questions:
 * Visit the project repository for community support
 * Submit issues on GitHub for bug reports
 * Check ESPHome version compatibility (requires 2025.12.0+ for v2.0.0+)
+* **IMPORTANT**: v3.5.0 removes spontaneous reboots during scheduled updates via safe scheduling & worker execution
 * **IMPORTANT**: v3.1.1 adds next-day forecasting and stability improvements
 * **IMPORTANT**: v2.3.5 fixes precision issues and adds Forward-Fill parsing for data integrity
 * **IMPORTANT**: v2.2.1 fixes critical midnight automation and retry issues from previous versions
@@ -507,3 +662,5 @@ Contributions are welcome! Please read the contributing guidelines and submit pu
 * Watchdog protection mechanisms
 * Boot recovery logic
 * Pipeline stability improvements
+* Safe scheduling & worker-based execution for long-running tasks
+* Reboot-free update mechanisms around critical schedule times
