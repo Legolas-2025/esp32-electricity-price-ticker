@@ -1,0 +1,1536 @@
+esphome:
+  name: entso-e-prices
+  friendly_name: Entso-E Prices
+  includes:
+    - entsoe_storage_v2.h
+    - entsoe_http_idf.h
+  on_boot:
+    priority: -100
+    then:
+      - lambda: |-
+          id(entsoe_today_nvs_status).publish_state("Today NVS: Unknown");
+          id(entsoe_tomorrow_nvs_status).publish_state("Tomorrow NVS: Unknown");
+          // Record boot time using Home Assistant time (if available)
+          if (id(ha_time).now().is_valid()) {
+            id(boot_time) = id(ha_time).now().timestamp;
+          } else {
+            id(boot_time) = 0;
+          }
+
+# Version: v4.2.0
+# - ESP-IDF only
+# - Two-slot NVS: today96 + tomorrow96 via entsoe_storage_v2.h
+# - Today and tomorrow always come from distinct NVS slots when possible
+# - Boot recovery for both today and tomorrow uses NVS first, then HTTP
+# - Midnight path can promote tomorrow96 -> today96
+
+esp32:
+  board: esp32dev
+  framework:
+    type: esp-idf
+
+captive_portal:
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  ap:
+    ssid: !secret entsoe_fallback_ap_ssid
+    password: !secret entsoe_fallback_ap_password
+
+api:
+  encryption:
+    key: !secret entsoe_api_encryption_key
+  actions:
+    - action: verify_price_update
+      supports_response: only
+      then:
+        - api.respond:
+            data: !lambda |-
+              root["price_updated"] = (id(avg_price).state > 0.0);
+              root["current_price"] = id(current_price).state;
+              root["avg_price"] = id(avg_price).state;
+              root["price_count"] = id(hourly_prices).size();
+              root["timestamp"] = id(ha_time).now().timestamp;
+              root["update_status"] = id(last_update_success);
+              root["retry_count"] = id(retry_count);
+              root["status_message"] = id(update_status_message);
+
+    # New: promote + load today from NVS (for midnight automation)
+    - action: promote_and_load_today_from_nvs
+      then:
+        - lambda: |-
+            auto t_now = id(ha_time).now();
+            if (!t_now.is_valid()) {
+              ESP_LOGW("entsoe", "promote_and_load_today_from_nvs: time invalid");
+              id(last_update_success) = false;
+              id(update_status_message) = std::string("NVS promote: time invalid");
+              id(entsoe_today_nvs_status).publish_state("NVS promote: time invalid");
+              return;
+            }
+            uint32_t today_yyyymmdd = (uint32_t)(t_now.year * 10000 + t_now.month * 100 + t_now.day_of_month);
+
+            if (!entsoe_storage_v2::promote_tomorrow_to_today(today_yyyymmdd)) {
+              ESP_LOGW("entsoe", "promote_and_load_today_from_nvs: promotion failed");
+              id(last_update_success) = false;
+              id(update_status_message) = std::string("NVS promote failed");
+              id(entsoe_today_nvs_status).publish_state("Today NVS: Promote FAILED");
+              return;
+            }
+
+            std::vector<float> loaded(96, NAN);
+            if (!entsoe_storage_v2::load_today_strict(today_yyyymmdd, loaded)) {
+              ESP_LOGW("entsoe", "promote_and_load_today_from_nvs: load_today_strict failed after promote");
+              id(last_update_success) = false;
+              id(update_status_message) = std::string("NVS load after promote failed");
+              id(entsoe_today_nvs_status).publish_state("Today NVS: Load FAILED after promote");
+              return;
+            }
+
+            id(hourly_prices) = loaded;
+            ESP_LOGI("entsoe", "promote_and_load_today_from_nvs: loaded today's prices from NVS for %u", today_yyyymmdd);
+            id(recompute_today_from_current_hourly_vector_script).execute();
+
+            id(last_update_success) = true;
+            id(update_status_message) = std::string("Loaded from NVS (promote+load)");
+
+            auto t = id(ha_time).now();
+            int cur_idx = (t.hour * 4) + (t.minute / 15);
+            std::string status = "Missing";
+            if (cur_idx >= 0 && cur_idx < 96) {
+              float val = id(hourly_prices)[cur_idx];
+              if (!std::isnan(val)) status = "Valid";
+            }
+            id(current_price_status_str) = status;
+
+            char buf_nvs[60];
+            sprintf(buf_nvs, "Today NVS: Promoted & Loaded for %04u-%02u-%02u",
+                    (unsigned)(today_yyyymmdd / 10000),
+                    (unsigned)((today_yyyymmdd / 100) % 100),
+                    (unsigned)(today_yyyymmdd % 100));
+            id(entsoe_today_nvs_status).publish_state(buf_nvs);
+
+            id(price_update_status).update();
+            id(price_status_message).update();
+            id(current_price_status).update();
+
+            // Mark last update source
+            id(entsoe_last_update_source).publish_state("NVS_promote");
+
+    # Legacy: API load_today_from_nvs (now via new storage)
+    - action: load_today_from_nvs
+      then:
+        - lambda: |-
+            auto t_now = id(ha_time).now();
+            uint32_t today_yyyymmdd = (uint32_t)(t_now.year * 10000 + t_now.month * 100 + t_now.day_of_month);
+            std::vector<float> loaded(96, NAN);
+            if (!entsoe_storage_v2::load_today_strict(today_yyyymmdd, loaded)) {
+              ESP_LOGW("entsoe", "API load_today_from_nvs: today96 load_today_strict failed");
+              id(last_update_success) = false;
+              id(update_status_message) = std::string("NVS load_today_from_nvs failed");
+              id(entsoe_today_nvs_status).publish_state("Today NVS: Load FAILED");
+              return;
+            }
+
+            id(hourly_prices) = loaded;
+            ESP_LOGI("entsoe", "API load_today_from_nvs: loaded prices from today96 NVS for %u", today_yyyymmdd);
+            id(recompute_today_from_current_hourly_vector_script).execute();
+
+            id(last_update_success) = true;
+            id(update_status_message) = std::string("Loaded from NVS (API)");
+
+            auto t = id(ha_time).now();
+            int cur_idx = (t.hour * 4) + (t.minute / 15);
+            std::string status = "Missing";
+            if (cur_idx >= 0 && cur_idx < 96) {
+              float val = id(hourly_prices)[cur_idx];
+              if (!std::isnan(val)) status = "Valid";
+            } else {
+              status = "Missing";
+            }
+            id(current_price_status_str) = status;
+
+            char buf_nvs[40];
+            sprintf(buf_nvs, "Today NVS: Loaded for %04u-%02u-%02u",
+                    (unsigned)(today_yyyymmdd / 10000),
+                    (unsigned)((today_yyyymmdd / 100) % 100),
+                    (unsigned)(today_yyyymmdd % 100));
+            id(entsoe_today_nvs_status).publish_state(buf_nvs);
+
+            id(price_update_status).update();
+            id(price_status_message).update();
+            id(current_price_status).update();
+
+    - action: clear_today_prices
+      then:
+        - script.execute: clear_today_prices
+
+    - action: clear_tomorrow_prices
+      then:
+        - script.execute: clear_tomorrow_prices
+
+ota:
+  - platform: esphome
+
+logger:
+  level: INFO
+
+# 2. TODAY'S PRICE SENSORS
+sensor:
+  - platform: template
+    name: "Current Electricity Price"
+    id: current_price
+    unit_of_measurement: "€/kWh"
+    accuracy_decimals: 4
+    icon: "mdi:currency-eur"
+    lambda: |-
+      auto now = id(ha_time).now();
+      int local_hour_index = now.hour;
+      int minute_slot = now.minute / 15;
+      int final_index = (local_hour_index * 4) + minute_slot;
+      if (final_index >= 0 && final_index < (int)id(hourly_prices).size()) {
+        return id(hourly_prices)[final_index];
+      }
+      return {};
+
+  - platform: template
+    name: "Next Electricity Price"
+    id: next_price
+    unit_of_measurement: "€/kWh"
+    accuracy_decimals: 4
+    icon: "mdi:arrow-right-circle"
+    lambda: |-
+      auto now = id(ha_time).now();
+      int local_hour_index = now.hour;
+      int minute_slot = now.minute / 15;
+      int next_index = (local_hour_index * 4) + minute_slot + 1;
+      if (next_index >= 0 && next_index < (int)id(hourly_prices).size()) {
+        return id(hourly_prices)[next_index];
+      }
+      return {};
+
+  - platform: template
+    name: "Average Electricity Price Today"
+    id: avg_price
+    unit_of_measurement: "€/kWh"
+    accuracy_decimals: 4
+    icon: "mdi:chart-bell-curve"
+
+  - platform: template
+    name: "Highest Electricity Price Today"
+    id: max_price
+    unit_of_measurement: "€/kWh"
+    accuracy_decimals: 4
+    icon: "mdi:arrow-up-bold"
+
+  - platform: template
+    name: "Lowest Electricity Price Today"
+    id: min_price
+    unit_of_measurement: "€/kWh"
+    accuracy_decimals: 4
+    icon: "mdi:arrow-down-bold"
+
+  - platform: template
+    name: "Current Hourly Electricity Price"
+    id: current_hourly_price
+    unit_of_measurement: "€/kWh"
+    accuracy_decimals: 4
+    icon: "mdi:chart-line"
+    lambda: |-
+      auto now = id(ha_time).now();
+      int hourly_index = now.hour;
+      if (hourly_index >= 0 && hourly_index < (int)id(hourly_avg_prices_kwh).size()) {
+        return id(hourly_avg_prices_kwh)[hourly_index];
+      }
+      return {};
+
+  - platform: template
+    name: "Next Hourly Electricity Price"
+    id: next_hourly_price
+    unit_of_measurement: "€/kWh"
+    accuracy_decimals: 4
+    icon: "mdi:arrow-right-circle-outline"
+    lambda: |-
+      auto now = id(ha_time).now();
+      int next_hourly_index = now.hour + 1;
+      if (next_hourly_index >= 0 && next_hourly_index < (int)id(hourly_avg_prices_kwh).size()) {
+        return id(hourly_avg_prices_kwh)[next_hourly_index];
+      }
+      return {};
+
+  - platform: template
+    name: "Highest Hourly Electricity Price Today"
+    id: max_hourly_price
+    unit_of_measurement: "€/kWh"
+    accuracy_decimals: 4
+    icon: "mdi:arrow-up-bold-box"
+
+  - platform: template
+    name: "Lowest Hourly Electricity Price Today"
+    id: min_hourly_price
+    unit_of_measurement: "€/kWh"
+    accuracy_decimals: 4
+    icon: "mdi:arrow-down-bold-box"
+
+  - platform: template
+    name: "Current Max Hourly Price Percentage"
+    id: current_max_hourly_price_percentage
+    unit_of_measurement: "%"
+    accuracy_decimals: 0
+    icon: "mdi:percent"
+    lambda: |-
+      float current_p = id(current_hourly_price).state;
+      float max_p = id(max_hourly_price).state;
+      if (std::isnan(current_p) || std::isnan(max_p) || max_p <= 0.0) return {};
+      return (current_p / max_p) * 100.0;
+
+  - platform: template
+    name: "Daily Price Update Attempts"
+    id: daily_price_update_attempts
+    icon: "mdi:counter"
+    accuracy_decimals: 0
+    lambda: |-
+      return (int)id(retry_count);
+
+# 3. NEXT DAY PRICE SENSORS
+  - platform: template
+    name: "Next Day Current Electricity Price"
+    id: next_day_current_price
+    unit_of_measurement: "€/kWh"
+    accuracy_decimals: 4
+    icon: "mdi:currency-eur"
+    lambda: |-
+      auto now = id(ha_time).now();
+      int local_hour_index = now.hour;
+      int minute_slot = now.minute / 15;
+      int final_index = (local_hour_index * 4) + minute_slot;
+      if (final_index >= 0 && final_index < (int)id(next_day_hourly_prices).size()) {
+        return id(next_day_hourly_prices)[final_index];
+      }
+      return {};
+
+  - platform: template
+    name: "Next Day Next Electricity Price"
+    id: next_day_next_price
+    unit_of_measurement: "€/kWh"
+    accuracy_decimals: 4
+    icon: "mdi:arrow-right-circle"
+    lambda: |-
+      auto now = id(ha_time).now();
+      int local_hour_index = now.hour;
+      int minute_slot = now.minute / 15;
+      int next_index = (local_hour_index * 4) + minute_slot + 1;
+      if (next_index >= 0 && next_index < (int)id(next_day_hourly_prices).size()) {
+        return id(next_day_hourly_prices)[next_index];
+      }
+      return {};
+
+  - platform: template
+    name: "Average Electricity Price Tomorrow"
+    id: next_day_avg_price
+    unit_of_measurement: "€/kWh"
+    accuracy_decimals: 4
+    icon: "mdi:chart-bell-curve"
+
+  - platform: template
+    name: "Highest Electricity Price Tomorrow"
+    id: next_day_max_price
+    unit_of_measurement: "€/kWh"
+    accuracy_decimals: 4
+    icon: "mdi:arrow-up-bold"
+
+  - platform: template
+    name: "Lowest Electricity Price Tomorrow"
+    id: next_day_min_price
+    unit_of_measurement: "€/kWh"
+    accuracy_decimals: 4
+    icon: "mdi:arrow-down-bold"
+
+  - platform: template
+    name: "Current Hourly Electricity Price Tomorrow"
+    id: next_day_current_hourly_price
+    unit_of_measurement: "€/kWh"
+    accuracy_decimals: 4
+    icon: "mdi:chart-line"
+    lambda: |-
+      auto now = id(ha_time).now();
+      int hourly_index = now.hour;
+      if (hourly_index >= 0 && hourly_index < (int)id(next_day_hourly_avg_prices_kwh).size()) {
+        return id(next_day_hourly_avg_prices_kwh)[hourly_index];
+      }
+      return {};
+
+  - platform: template
+    name: "Next Hourly Electricity Price Tomorrow"
+    id: next_day_next_hourly_price
+    unit_of_measurement: "€/kWh"
+    accuracy_decimals: 4
+    icon: "mdi:arrow-right-circle-outline"
+    lambda: |-
+      auto now = id(ha_time).now();
+      int next_hourly_index = now.hour + 1;
+      if (next_hourly_index >= 0 && next_hourly_index < (int)id(next_day_hourly_avg_prices_kwh).size()) {
+        return id(next_day_hourly_avg_prices_kwh)[next_hourly_index];
+      }
+      return {};
+
+  - platform: template
+    name: "Highest Hourly Electricity Price Tomorrow"
+    id: next_day_max_hourly_price
+    unit_of_measurement: "€/kWh"
+    accuracy_decimals: 4
+    icon: "mdi:arrow-up-bold-box"
+
+  - platform: template
+    name: "Lowest Hourly Electricity Price Tomorrow"
+    id: next_day_min_hourly_price
+    unit_of_measurement: "€/kWh"
+    accuracy_decimals: 4
+    icon: "mdi:arrow-down-bold-box"
+
+  - platform: template
+    name: "Next Day Current Max Hourly Price Percentage"
+    id: next_day_current_max_hourly_price_percentage
+    unit_of_measurement: "%"
+    accuracy_decimals: 0
+    icon: "mdi:percent"
+    lambda: |-
+      float current_p = id(next_day_current_hourly_price).state;
+      float max_p = id(next_day_max_hourly_price).state;
+      if (std::isnan(current_p) || std::isnan(max_p) || max_p <= 0.0) return {};
+      return (current_p / max_p) * 100.0;
+
+  - platform: template
+    name: "Next Day Price Update Attempts"
+    id: next_day_price_update_attempts
+    icon: "mdi:counter"
+    accuracy_decimals: 0
+    lambda: |-
+      return (int)id(next_day_retry_count);
+
+# 4. TEXT SENSORS
+text_sensor:
+  - platform: template
+    name: "ENTSO-E Hourly Prices EUR⁄kWh JSON"
+    id: json_hourly_prices_kwh
+    icon: "mdi:code-json"
+
+  - platform: template
+    name: "Time Of Highest Energy Price Today"
+    id: max_price_time
+    entity_category: "diagnostic"
+    icon: "mdi:clock-time-three"
+    lambda: 'return id(max_price_time_str);'
+
+  - platform: template
+    name: "Time Of Lowest Energy Price Today"
+    id: min_price_time
+    entity_category: "diagnostic"
+    icon: "mdi:clock-time-three"
+    lambda: 'return id(min_price_time_str);'
+
+  - platform: template
+    name: "Time Of Highest Hourly Energy Price Today"
+    id: max_hourly_price_time
+    entity_category: "diagnostic"
+    icon: "mdi:clock-time-three"
+    lambda: 'return id(max_hourly_price_time_str);'
+
+  - platform: template
+    name: "Time Of Lowest Hourly Energy Price Today"
+    id: min_hourly_price_time
+    entity_category: "diagnostic"
+    icon: "mdi:clock-time-three"
+    lambda: 'return id(min_hourly_price_time_str);'
+
+  - platform: template
+    name: "Price Update Status"
+    id: price_update_status
+    icon: "mdi:update"
+    lambda: |-
+      return id(last_update_success) ? std::string("SUCCESS") : std::string("FAILED/WAITING");
+
+  - platform: template
+    name: "Last Price Update Time"
+    id: last_price_update_time
+    icon: "mdi:clock-outline"
+    lambda: |-
+      time_t last_update = id(last_successful_update);
+      if (last_update > 0) {
+        struct tm *tm_info = localtime(&last_update);
+        char time_buf[20];
+        strftime(time_buf, sizeof(time_buf), "%Y-%m-%d %H:%M:%S", tm_info);
+        return std::string(time_buf);
+      }
+      return std::string("Never");
+
+  - platform: template
+    name: "Price Update Status Message"
+    id: price_status_message
+    icon: "mdi:message-text-outline"
+    lambda: 'return id(update_status_message);'
+
+  - platform: template
+    name: "Current Price Status"
+    id: current_price_status
+    icon: "mdi:information-outline"
+    lambda: |-
+      return id(current_price_status_str);
+
+  - platform: template
+    name: "ENTSO-E Next Day Hourly Prices EUR⁄kWh JSON"
+    id: json_next_day_hourly_prices_kwh
+    icon: "mdi:code-json"
+
+  - platform: template
+    name: "Time Of Highest Energy Price Tomorrow"
+    id: next_day_max_price_time
+    entity_category: "diagnostic"
+    icon: "mdi:clock-time-three"
+    lambda: 'return id(next_day_max_price_time_str);'
+
+  - platform: template
+    name: "Time Of Lowest Energy Price Tomorrow"
+    id: next_day_min_price_time
+    entity_category: "diagnostic"
+    icon: "mdi:clock-time-three"
+    lambda: 'return id(next_day_min_price_time_str);'
+
+  - platform: template
+    name: "Time Of Highest Hourly Energy Price Tomorrow"
+    id: next_day_max_hourly_price_time
+    entity_category: "diagnostic"
+    icon: "mdi:clock-time-three"
+    lambda: 'return id(next_day_max_hourly_price_time_str);'
+
+  - platform: template
+    name: "Time Of Lowest Hourly Energy Price Tomorrow"
+    id: next_day_min_hourly_price_time
+    entity_category: "diagnostic"
+    icon: "mdi:clock-time-three"
+    lambda: 'return id(next_day_min_hourly_price_time_str);'
+
+  - platform: template
+    name: "Next Day Price Update Status"
+    id: next_day_price_update_status
+    icon: "mdi:update"
+    lambda: |-
+      return id(next_day_last_update_success) ? std::string("SUCCESS") : std::string("FAILED/WAITING");
+
+  - platform: template
+    name: "Next Day Last Price Update Time"
+    id: next_day_last_price_update_time
+    icon: "mdi:clock-outline"
+    lambda: |-
+      time_t last_update = id(next_day_last_update_attempt);
+      if (last_update > 0) {
+        struct tm *tm_info = localtime(&last_update);
+        char time_buf[20];
+        strftime(time_buf, sizeof(time_buf), "%Y-%m-%d %H:%M:%S", tm_info);
+        return std::string(time_buf);
+      }
+      return std::string("Never");
+
+  - platform: template
+    name: "Next Day Price Update Status Message"
+    id: next_day_price_status_message
+    icon: "mdi:message-text-outline"
+    lambda: 'return id(next_day_update_status_message);'
+
+  - platform: template
+    name: "Next Day Current Price Status"
+    id: next_day_current_price_status
+    icon: "mdi:information-outline"
+    lambda: |-
+      return id(next_day_current_price_status_str);
+
+  - platform: template
+    name: "ENTSO-E Last Reboot"
+    id: entsoe_last_reboot
+    icon: "mdi:clock-start"
+    entity_category: "diagnostic"
+    lambda: |-
+      time_t bt = id(boot_time);
+      if (bt > 0) {
+        struct tm *tm_info = localtime(&bt);
+        char time_buf[20];
+        strftime(time_buf, sizeof(time_buf), "%Y-%m-%d %H:%M:%S", tm_info);
+        return std::string("Last reboot: ") + time_buf;
+      }
+      return std::string("Last reboot: Unknown");
+
+  - platform: template
+    name: "Entso-E Today NVS Status"
+    id: entsoe_today_nvs_status
+    icon: "mdi:database-check"
+    entity_category: "diagnostic"
+    update_interval: never
+
+  - platform: template
+    name: "Entso-E Tomorrow NVS Status"
+    id: entsoe_tomorrow_nvs_status
+    icon: "mdi:database-check"
+    entity_category: "diagnostic"
+    update_interval: never
+
+  - platform: template
+    name: "ENTSO-E Last Update Source"
+    id: entsoe_last_update_source
+    icon: "mdi:information"
+    entity_category: "diagnostic"
+
+# 5. TIME
+time:
+  - platform: homeassistant
+    id: ha_time
+    timezone: !secret entsoe_timezone
+    on_time:
+      - minutes: /15
+        seconds: 2
+        then:
+          - component.update: current_price
+          - component.update: next_price
+          - component.update: current_hourly_price
+          - component.update: next_hourly_price
+          - component.update: current_max_hourly_price_percentage
+
+      - minutes: /15
+        seconds: 3
+        then:
+          - component.update: next_day_current_price
+          - component.update: next_day_next_price
+          - component.update: next_day_current_hourly_price
+          - component.update: next_day_next_hourly_price
+          - component.update: next_day_current_max_hourly_price_percentage
+
+      - seconds: 45
+        then:
+          - script.execute: boot_recovery_today_script
+
+      - seconds: 50
+        then:
+          - script.execute: boot_recovery_tomorrow_script
+
+      - seconds: /10
+        then:
+          - lambda: |-
+              if (id(need_today_update) && !id(is_updating_today)) {
+                ESP_LOGI("entsoe", "Worker starting Today's Price Update (from flag)");
+                id(need_today_update) = false;
+                id(smart_price_update).execute();
+              }
+
+      - seconds: /10
+        then:
+          - lambda: |-
+              auto t = id(ha_time).now();
+              bool in_window = (t.hour > 13 && t.hour < 23) ||
+                               (t.hour == 13 && t.minute >= 20) ||
+                               (t.hour == 23 && t.minute <= 50);
+              if (id(need_tomorrow_update) && !id(is_updating_tomorrow) && in_window) {
+                ESP_LOGI("entsoe", "Worker starting Tomorrow's Price Update (from flag)");
+                id(need_tomorrow_update) = false;
+                id(smart_next_day_price_update).execute();
+              }
+
+      - minutes: /1
+        seconds: 10
+        then:
+          - lambda: |-
+              // If boot_time was not set at on_boot because time was invalid,
+              // set it once when time becomes valid.
+              if (id(boot_time) == 0 && id(ha_time).now().is_valid()) {
+                id(boot_time) = id(ha_time).now().timestamp;
+                ESP_LOGI("entsoe", "boot_time set from HA time: %d", (int) id(boot_time));
+              }
+
+# 6. GLOBALS
+globals:
+  - id: hourly_prices
+    type: std::vector<float>
+    initial_value: '{0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0}'
+  - id: hourly_avg_prices_kwh
+    type: std::vector<float>
+    initial_value: '{0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0}'
+  - id: min_price_time_str
+    type: std::string
+    initial_value: '"00:00"'
+  - id: max_price_time_str
+    type: std::string
+    initial_value: '"00:00"'
+  - id: min_hourly_price_time_str
+    type: std::string
+    initial_value: '"00:00"'
+  - id: max_hourly_price_time_str
+    type: std::string
+    initial_value: '"00:00"'
+  - id: boot_time
+    type: time_t
+    initial_value: '0'
+  - id: last_successful_update
+    type: time_t
+    initial_value: '0'
+  - id: last_update_attempt
+    type: time_t
+    initial_value: '0'
+  - id: last_update_success
+    type: bool
+    initial_value: 'false'
+  - id: update_status_message
+    type: std::string
+    initial_value: '"System Boot"'
+  - id: retry_count
+    type: int
+    initial_value: '0'
+  - id: boot_recovery_executed
+    type: bool
+    initial_value: 'false'
+  - id: api_token
+    type: std::string
+    initial_value: '"!secret entsoe_entsoe_api_token"'
+  - id: area_code
+    type: std::string
+    initial_value: '"!secret entsoe_country_area_code"'
+  - id: current_price_status_str
+    type: std::string
+    initial_value: '"Initializing..." '
+  - id: need_today_update
+    type: bool
+    initial_value: 'false'
+  - id: is_updating_today
+    type: bool
+    initial_value: 'false'
+  - id: need_tomorrow_update
+    type: bool
+    initial_value: 'false'
+  - id: is_updating_tomorrow
+    type: bool
+    initial_value: 'false'
+  - id: next_day_hourly_prices
+    type: std::vector<float>
+    initial_value: '{0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0}'
+  - id: next_day_hourly_avg_prices_kwh
+    type: std::vector<float>
+    initial_value: '{0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0}'
+  - id: next_day_min_price_time_str
+    type: std::string
+    initial_value: '"00:00"'
+  - id: next_day_max_price_time_str
+    type: std::string
+    initial_value: '"00:00"'
+  - id: next_day_min_hourly_price_time_str
+    type: std::string
+    initial_value: '"00:00"'
+  - id: next_day_max_hourly_price_time_str
+    type: std::string
+    initial_value: '"00:00"'
+  - id: next_day_last_successful_update
+    type: time_t
+    initial_value: '0'
+  - id: next_day_last_update_attempt
+    type: time_t
+    initial_value: '0'
+  - id: next_day_last_update_success
+    type: bool
+    initial_value: 'false'
+  - id: next_day_update_status_message
+    type: std::string
+    initial_value: '"Waiting for 13:20"'
+  - id: next_day_retry_count
+    type: int
+    initial_value: '0'
+  - id: next_day_boot_recovery_executed
+    type: bool
+    initial_value: 'false'
+  - id: next_day_current_price_status_str
+    type: std::string
+    initial_value: '"Waiting..."'
+
+# 7. BUTTONS
+button:
+  - platform: template
+    name: "Entso-E Force Update"
+    id: force_update_button
+    icon: "mdi:refresh"
+    on_press:
+      then:
+        - logger.log: "Manual Update Triggered"
+        - lambda: 'id(update_status_message) = "Updating...";'
+        - text_sensor.template.publish:
+            id: price_status_message
+            state: "Updating..."
+        - delay: 500ms
+        - lambda: |-
+            id(need_today_update) = true;
+
+  - platform: template
+    name: "Entso-E Force Next Day Update"
+    id: force_next_day_update_button
+    icon: "mdi:calendar-refresh"
+    on_press:
+      then:
+        - lambda: |-
+            auto t = id(ha_time).now();
+            bool in_window = (t.hour > 13 && t.hour < 23) ||
+                             (t.hour == 13 && t.minute >= 20) ||
+                             (t.hour == 23 && t.minute <= 50);
+            if (in_window) {
+              ESP_LOGI("entsoe", "Manual Next Day Update Triggered");
+              id(next_day_update_status_message) = "Updating...";
+              id(next_day_price_status_message).publish_state("Updating...");
+              id(need_tomorrow_update) = true;
+            } else {
+              ESP_LOGI("entsoe", "Next Day Update Ignored - Only available between 13:20 and 23:50");
+            }
+
+  - platform: template
+    name: "Entso-E Reboot Device"
+    id: entsoe_reboot_button
+    icon: "mdi:power-cycle"
+    on_press:
+      then:
+        - logger.log: "Manual reboot requested from Home Assistant"
+        - lambda: |-
+            ESP_LOGI("entsoe", "Rebooting device by user request");
+            esp_restart();
+
+# 8. SCRIPTS
+script:
+  - id: smart_price_update
+    then:
+      - lambda: |-
+          if (id(is_updating_today)) {
+            ESP_LOGW("entsoe", "smart_price_update skipped: already updating today");
+            return;
+          }
+          id(is_updating_today) = true;
+          id(last_update_attempt) = id(ha_time).now().timestamp;
+          id(retry_count)++;
+          id(daily_price_update_attempts).publish_state(id(retry_count));
+      - script.execute: full_update_logic_script
+      - lambda: |-
+          // Status: only "Valid" if last_update_success and slot is non-NaN
+          auto t = id(ha_time).now();
+          int cur_idx = (t.hour * 4) + (t.minute / 15);
+
+          std::string status = "Missing";
+          if (id(last_update_success) && cur_idx >= 0 && cur_idx < 96) {
+            float val = id(hourly_prices)[cur_idx];
+            if (!std::isnan(val)) {
+              status = "Valid";
+            }
+          }
+          id(current_price_status_str) = status;
+
+          id(current_price_status).update();
+          id(price_update_status).update();
+          id(price_status_message).update();
+          id(current_price).update();
+          id(current_hourly_price).update();
+          id(current_max_hourly_price_percentage).update();
+          id(max_hourly_price_time).update();
+          id(min_hourly_price_time).update();
+          id(is_updating_today) = false;
+
+  - id: full_update_logic_script
+    then:
+      - lambda: |-
+          const double PROV_FEE = 0.12;
+          const double VAT_R = 0.22;
+          const double MULT = (1.0 + PROV_FEE) * (1.0 + VAT_R);
+
+          auto t_now = id(ha_time).now();
+          // Today's curve is for "today_yyyymmdd"
+          uint32_t today_yyyymmdd = (uint32_t)(t_now.year * 10000 + t_now.month * 100 + t_now.day_of_month);
+
+          // Build ENTSO-E period from yesterday 23:00 to today 23:00 (as before)
+          time_t y_ts = t_now.timestamp - 86400;
+          struct tm *tm_y = localtime(&y_ts);
+          char buf[16];
+          sprintf(buf, "%04d%02d%02d2300", tm_y->tm_year + 1900, tm_y->tm_mon + 1, tm_y->tm_mday);
+          std::string pStart = std::string(buf);
+          sprintf(buf, "%04d%02d%02d2300", t_now.year, t_now.month, t_now.day_of_month);
+          std::string pEnd = std::string(buf);
+
+          std::string url = "https://web-api.tp.entsoe.eu/api?securityToken=" + id(api_token) +
+                            "&documentType=A44&in_Domain=" + id(area_code) +
+                            "&out_Domain=" + id(area_code) +
+                            "&periodStart=" + pStart + "&periodEnd=" + pEnd;
+
+          ESP_LOGI("entsoe", "Fetching Today's Prices from ENTSO-E API (ESP-IDF HTTPS)");
+
+          std::string xml;
+          std::string status_msg;
+          if (!entsoe_http_idf::fetch(url, xml, status_msg)) {
+            id(last_update_success) = false;
+            id(update_status_message) = status_msg;
+            ESP_LOGW("entsoe", "Today's Price Fetch Failed: %s", status_msg.c_str());
+            return;
+          }
+
+          // Parse XML into n_kwh[96] (unchanged parsing)
+          ESP_LOGI("entsoe", "Today's Prices: Parsing XML (len=%d)", (int)xml.size());
+
+          std::vector<float> n_kwh(96, NAN);
+          int count = 0;
+          double raw_sum_mwh = 0.0;
+          int last_pos = 0;
+          float last_raw_price = NAN;
+
+          size_t pos = 0;
+          while ((pos = xml.find("<Point>", pos)) != std::string::npos) {
+            size_t end = xml.find("</Point>", pos);
+            if (end == std::string::npos) break;
+            std::string p_xml = xml.substr(pos, end - pos);
+
+            size_t s_pos = p_xml.find("<position>");
+            size_t e_pos = p_xml.find("</position>");
+            size_t s_pri = p_xml.find("<price.amount>");
+            size_t e_pri = p_xml.find("</price.amount>");
+
+            if (s_pos != std::string::npos && s_pri != std::string::npos) {
+              int current_pos = atoi(p_xml.substr(s_pos + 10, e_pos - (s_pos + 10)).c_str());
+              float current_raw_price = atof(p_xml.substr(s_pri + 14, e_pri - (s_pri + 14)).c_str());
+
+              if (current_pos > (last_pos + 1) && !std::isnan(last_raw_price)) {
+                for (int f = last_pos + 1; f < current_pos; f++) {
+                  if (f <= 96) {
+                    n_kwh[f - 1] = (float)((double)last_raw_price * MULT / 1000.0);
+                    raw_sum_mwh += (double)last_raw_price;
+                    count++;
+                  }
+                }
+              }
+              if (current_pos <= 96) {
+                n_kwh[current_pos - 1] = (float)((double)current_raw_price * MULT / 1000.0);
+                raw_sum_mwh += (double)current_raw_price;
+                count++;
+                last_pos = current_pos;
+                last_raw_price = current_raw_price;
+              }
+            }
+            pos = end + 8;
+          }
+          if (last_pos > 0 && last_pos < 96 && !std::isnan(last_raw_price)) {
+            for (int f = last_pos + 1; f <= 96; f++) {
+              n_kwh[f - 1] = (float)((double)last_raw_price * MULT / 1000.0);
+              raw_sum_mwh += (double)last_raw_price;
+              count++;
+            }
+          }
+
+          // After parsing & forward-fill:
+          if (count > 0) {
+            id(hourly_prices) = n_kwh;
+            id(recompute_today_from_current_hourly_vector_script).execute();
+            char m[40]; sprintf(m, "Success (%d/96)", count);
+            id(update_status_message) = std::string(m);
+            id(last_successful_update) = id(ha_time).now().timestamp;
+            id(last_update_success) = true;
+            ESP_LOGI("entsoe", "Today's Prices Updated Successfully: %d points", count);
+
+            // NEW: store today curve in today96
+            if (!entsoe_storage_v2::store_today(today_yyyymmdd, n_kwh)) {
+              ESP_LOGW("entsoe", "Failed to store today's prices in today96 NVS");
+              id(entsoe_today_nvs_status).publish_state("Today NVS: Store FAILED");
+            } else {
+              ESP_LOGI("entsoe", "Stored today's prices in NVS today96 for date %u", today_yyyymmdd);
+              char buf_nvs[60];
+              sprintf(buf_nvs, "Today NVS: Stored for %04u-%02u-%02u",
+                      (unsigned)(today_yyyymmdd / 10000),
+                      (unsigned)((today_yyyymmdd / 100) % 100),
+                      (unsigned)(today_yyyymmdd % 100));
+              id(entsoe_today_nvs_status).publish_state(buf_nvs);
+            }
+
+            // Mark last update source
+            id(entsoe_last_update_source).publish_state("HTTP_today");
+
+
+          } else {
+            id(last_update_success) = false;
+            id(update_status_message) = std::string("No data points parsed");
+            ESP_LOGW("entsoe", "Today's Prices: No data points parsed");
+          }
+
+  - id: recompute_today_from_current_hourly_vector_script
+    then:
+      - lambda: |-
+          auto &n_kwh = id(hourly_prices);
+          if ((int)n_kwh.size() < 96) {
+            ESP_LOGW("entsoe", "recompute_today_from_current_hourly_vector_script: hourly_prices size < 96");
+            id(last_update_success) = false;
+            id(update_status_message) = std::string("NVS: invalid vector size");
+            return;
+          }
+
+          float min_v = 9999.0, max_v = -9999.0;
+          int min_idx = 0, max_idx = 0;
+
+          for (int i = 0; i < 96; i++) {
+            if (!std::isnan(n_kwh[i])) {
+              if (n_kwh[i] < min_v) { min_v = n_kwh[i]; min_idx = i; }
+              if (n_kwh[i] > max_v) { max_v = n_kwh[i]; max_idx = i; }
+            }
+          }
+
+          std::vector<float> h_sums(24, 0.0);
+          std::vector<int> h_counts(24, 0);
+          float h_min_v = 9999, h_max_v = -9999;
+          int h_min_i = 0, h_max_i = 0;
+
+          for (int i = 0; i < 96; i++) {
+            if (!std::isnan(n_kwh[i])) {
+              h_sums[i / 4] += n_kwh[i];
+              h_counts[i / 4]++;
+            }
+          }
+
+          std::string json = "[";
+          double raw_sum_kwh = 0.0;
+          int count_kwh = 0;
+
+          for (int i = 0; i < 24; i++) {
+            if (h_counts[i] > 0) {
+              float h_avg = h_sums[i] / h_counts[i];
+              id(hourly_avg_prices_kwh)[i] = h_avg;
+              if (h_avg < h_min_v) { h_min_v = h_avg; h_min_i = i; }
+              if (h_avg > h_max_v) { h_max_v = h_avg; h_max_i = i; }
+              char p_buf[10]; sprintf(p_buf, "%.4f", h_avg); json += p_buf;
+              raw_sum_kwh += (double)h_avg;
+              count_kwh++;
+            } else {
+              id(hourly_avg_prices_kwh)[i] = NAN;
+              json += "null";
+            }
+            if (i < 23) json += ",";
+          }
+          json += "]";
+
+          id(json_hourly_prices_kwh).publish_state(json.c_str());
+
+          if (min_v < 9999.0 && max_v > -9999.0) {
+            id(min_price).publish_state(min_v);
+            id(max_price).publish_state(max_v);
+            char t_buf[6];
+            sprintf(t_buf, "%02d:%02d", (min_idx / 4), (min_idx % 4) * 15); id(min_price_time_str) = t_buf;
+            sprintf(t_buf, "%02d:%02d", (max_idx / 4), (max_idx % 4) * 15); id(max_price_time_str) = t_buf;
+          }
+
+          if (h_min_v < 9999.0 && h_max_v > -9999.0) {
+            id(min_hourly_price).publish_state(h_min_v);
+            id(max_hourly_price).publish_state(h_max_v);
+            char h_buf[6];
+            sprintf(h_buf, "%02d:00", h_min_i); id(min_hourly_price_time_str) = h_buf;
+            sprintf(h_buf, "%02d:00", h_max_i); id(max_hourly_price_time_str) = h_buf;
+          }
+
+          if (count_kwh > 0) {
+            double f_avg = raw_sum_kwh / (double)count_kwh;
+            id(avg_price).publish_state((float)f_avg);
+          }
+
+          id(last_successful_update) = id(ha_time).now().timestamp;
+          id(last_update_success) = true;
+
+  - id: smart_next_day_price_update
+    then:
+      - lambda: |-
+          if (id(is_updating_tomorrow)) {
+            ESP_LOGW("entsoe", "smart_next_day_price_update skipped: already updating tomorrow");
+            return;
+          }
+          id(is_updating_tomorrow) = true;
+          id(next_day_last_update_attempt) = id(ha_time).now().timestamp;
+          id(next_day_retry_count)++;
+          id(next_day_price_update_attempts).publish_state(id(next_day_retry_count));
+      - script.execute: next_day_full_update_logic_script
+      - lambda: |-
+          auto t = id(ha_time).now();
+          int cur_idx = (t.hour * 4) + (t.minute / 15);
+
+          std::string status = "Missing";
+          if (id(next_day_last_update_success) && cur_idx >= 0 && cur_idx < 96) {
+            float val = id(next_day_hourly_prices)[cur_idx];
+            if (!std::isnan(val)) {
+              status = "Valid";
+            }
+          }
+          id(next_day_current_price_status_str) = status;
+
+          id(next_day_current_price_status).update();
+          id(next_day_price_update_status).update();
+          id(next_day_price_status_message).update();
+          id(next_day_current_price).update();
+          id(next_day_current_hourly_price).update();
+          id(next_day_current_max_hourly_price_percentage).update();
+          id(next_day_max_hourly_price_time).update();
+          id(next_day_min_hourly_price_time).update();
+          id(is_updating_tomorrow) = false;
+
+  - id: next_day_full_update_logic_script
+    then:
+      - lambda: |-
+          const double PROV_FEE = 0.12;
+          const double VAT_R = 0.22;
+          const double MULT = (1.0 + PROV_FEE) * (1.0 + VAT_R);
+
+          auto t_now = id(ha_time).now();
+          time_t tmr_ts = t_now.timestamp + 86400;
+          struct tm *tm_tmr = localtime(&tmr_ts);
+          uint32_t tomorrow_yyyymmdd = (uint32_t)((tm_tmr->tm_year + 1900) * 10000 +
+                                                  (tm_tmr->tm_mon + 1) * 100 +
+                                                  tm_tmr->tm_mday);
+
+          char buf[16];
+          sprintf(buf, "%04d%02d%02d2300", t_now.year, t_now.month, t_now.day_of_month);
+          std::string pStart = std::string(buf);
+          sprintf(buf, "%04d%02d%02d2300", tm_tmr->tm_year + 1900, tm_tmr->tm_mon + 1, tm_tmr->tm_mday);
+          std::string pEnd = std::string(buf);
+
+          std::string url = "https://web-api.tp.entsoe.eu/api?securityToken=" + id(api_token) +
+                            "&documentType=A44&in_Domain=" + id(area_code) +
+                            "&out_Domain=" + id(area_code) +
+                            "&periodStart=" + pStart + "&periodEnd=" + pEnd;
+
+          ESP_LOGI("entsoe", "Fetching Tomorrow's Prices from ENTSO-E API (ESP-IDF HTTPS)");
+          ESP_LOGI("entsoe", "Tomorrow's API: periodStart=%s, periodEnd=%s", pStart.c_str(), pEnd.c_str());
+
+          std::string xml;
+          std::string status_msg;
+          if (!entsoe_http_idf::fetch(url, xml, status_msg)) {
+            id(next_day_last_update_success) = false;
+            id(next_day_update_status_message) = status_msg;
+            ESP_LOGW("entsoe", "Tomorrow's Price Fetch Failed: %s", status_msg.c_str());
+            return;
+          }
+
+          // Parse XML into n_kwh[96], recompute stats (unchanged)
+          ESP_LOGI("entsoe", "Tomorrow's Prices: Parsing XML (len=%d)", (int)xml.size());
+
+          std::vector<float> n_kwh(96, NAN);
+          int count = 0;
+          double raw_sum_mwh = 0.0;
+          int last_pos = 0;
+          float last_raw_price = NAN;
+
+          size_t pos = 0;
+          while ((pos = xml.find("<Point>", pos)) != std::string::npos) {
+            size_t end = xml.find("</Point>", pos);
+            if (end == std::string::npos) break;
+            std::string p_xml = xml.substr(pos, end - pos);
+
+            size_t s_pos = p_xml.find("<position>");
+            size_t e_pos = p_xml.find("</position>");
+            size_t s_pri = p_xml.find("<price.amount>");
+            size_t e_pri = p_xml.find("</price.amount>");
+
+            if (s_pos != std::string::npos && s_pri != std::string::npos) {
+              int current_pos = atoi(p_xml.substr(s_pos + 10, e_pos - (s_pos + 10)).c_str());
+              float current_raw_price = atof(p_xml.substr(s_pri + 14, e_pri - (s_pri + 14)).c_str());
+
+              if (current_pos > (last_pos + 1) && !std::isnan(last_raw_price)) {
+                for (int f = last_pos + 1; f < current_pos; f++) {
+                  if (f <= 96) {
+                    n_kwh[f - 1] = (float)((double)last_raw_price * MULT / 1000.0);
+                    raw_sum_mwh += (double)last_raw_price;
+                    count++;
+                  }
+                }
+              }
+              if (current_pos <= 96) {
+                n_kwh[current_pos - 1] = (float)((double)current_raw_price * MULT / 1000.0);
+                raw_sum_mwh += (double)current_raw_price;
+                count++;
+                last_pos = current_pos;
+                last_raw_price = current_raw_price;
+              }
+            }
+            pos = end + 8;
+          }
+          if (last_pos > 0 && last_pos < 96 && !std::isnan(last_raw_price)) {
+            for (int f = last_pos + 1; f <= 96; f++) {
+              n_kwh[f - 1] = (float)((double)last_raw_price * MULT / 1000.0);
+              raw_sum_mwh += (double)last_raw_price;
+              count++;
+            }
+          }
+
+          if (count > 0) {
+            id(next_day_hourly_prices) = n_kwh;
+            // recompute tomorrow stats, JSON, etc. (same as now)
+
+            float min_v = 9999.0, max_v = -9999.0;
+            int min_idx = 0, max_idx = 0;
+            for (int i = 0; i < 96; i++) {
+              if (!std::isnan(n_kwh[i])) {
+                if (n_kwh[i] < min_v) { min_v = n_kwh[i]; min_idx = i; }
+                if (n_kwh[i] > max_v) { max_v = n_kwh[i]; max_idx = i; }
+              }
+            }
+
+            std::vector<float> h_sums(24, 0.0);
+            std::vector<int> h_counts(24, 0);
+            float h_min_v = 9999, h_max_v = -9999;
+            int h_min_i = 0, h_max_i = 0;
+
+            for (int i = 0; i < 96; i++) {
+              if (!std::isnan(n_kwh[i])) {
+                h_sums[i / 4] += n_kwh[i];
+                h_counts[i / 4]++;
+              }
+            }
+
+            std::string json = "[";
+            double raw_sum_kwh = 0.0;
+            int count_kwh = 0;
+
+            for (int i = 0; i < 24; i++) {
+              if (h_counts[i] > 0) {
+                float h_avg = h_sums[i] / h_counts[i];
+                id(next_day_hourly_avg_prices_kwh)[i] = h_avg;
+                if (h_avg < h_min_v) { h_min_v = h_avg; h_min_i = i; }
+                if (h_avg > h_max_v) { h_max_v = h_avg; h_max_i = i; }
+                char p_buf[10]; sprintf(p_buf, "%.4f", h_avg); json += p_buf;
+                raw_sum_kwh += (double)h_avg;
+                count_kwh++;
+              } else {
+                id(next_day_hourly_avg_prices_kwh)[i] = NAN;
+                json += "null";
+              }
+              if (i < 23) json += ",";
+            }
+            json += "]";
+
+            id(json_next_day_hourly_prices_kwh).publish_state(json.c_str());
+
+            id(next_day_min_price).publish_state(min_v);
+            id(next_day_max_price).publish_state(max_v);
+            char t_buf2[6];
+            sprintf(t_buf2, "%02d:%02d", (min_idx / 4), (min_idx % 4) * 15); id(next_day_min_price_time_str) = t_buf2;
+            sprintf(t_buf2, "%02d:%02d", (max_idx / 4), (max_idx % 4) * 15); id(next_day_max_price_time_str) = t_buf2;
+
+            id(next_day_min_hourly_price).publish_state(h_min_v);
+            id(next_day_max_hourly_price).publish_state(h_max_v);
+            char h_buf2[6];
+            sprintf(h_buf2, "%02d:00", h_min_i); id(next_day_min_hourly_price_time_str) = h_buf2;
+            sprintf(h_buf2, "%02d:00", h_max_i); id(next_day_max_hourly_price_time_str) = h_buf2;
+
+            if (count_kwh > 0) {
+              double f_avg = raw_sum_kwh / (double)count_kwh;
+              id(next_day_avg_price).publish_state((float)f_avg);
+            }
+
+            id(next_day_last_successful_update) = id(ha_time).now().timestamp;
+            id(next_day_last_update_success) = true;
+            char m2[40]; sprintf(m2, "Success (%d/96)", count);
+            id(next_day_update_status_message) = std::string(m2);
+            ESP_LOGI("entsoe", "Tomorrow's Prices Updated Successfully: %d points", count);
+
+            // NEW: store tomorrow curve in tomorrow96
+            if (!entsoe_storage_v2::store_tomorrow(tomorrow_yyyymmdd, n_kwh)) {
+              ESP_LOGW("entsoe", "Failed to store tomorrow's prices in tomorrow96 NVS");
+              id(entsoe_tomorrow_nvs_status).publish_state("Tomorrow NVS: Store FAILED");
+            } else {
+              ESP_LOGI("entsoe", "Stored tomorrow's prices in NVS tomorrow96 for date %u", tomorrow_yyyymmdd);
+              char buf_nvs[60];
+              sprintf(buf_nvs, "Tomorrow NVS: Stored for %04u-%02u-%02u",
+                      (unsigned)(tomorrow_yyyymmdd / 10000),
+                      (unsigned)((tomorrow_yyyymmdd / 100) % 100),
+                      (unsigned)(tomorrow_yyyymmdd % 100));
+              id(entsoe_tomorrow_nvs_status).publish_state(buf_nvs);
+            }
+
+          } else {
+            id(next_day_last_update_success) = false;
+            id(next_day_update_status_message) = std::string("No data points parsed");
+            ESP_LOGW("entsoe", "Tomorrow's Prices: No data points parsed");
+          }
+
+  - id: boot_recovery_today_script
+    then:
+      - lambda: |-
+          if (id(boot_recovery_executed)) {
+            ESP_LOGD("entsoe", "boot_recovery_today_script: already executed, skipping");
+            return;
+          }
+          id(boot_recovery_executed) = true;
+
+          auto t_now = id(ha_time).now();
+          if (!t_now.is_valid()) {
+            ESP_LOGW("entsoe", "boot_recovery_today_script: time invalid, scheduling HTTP update");
+            id(need_today_update) = true;
+            return;
+          }
+
+          uint32_t today_yyyymmdd = (uint32_t)(t_now.year * 10000 + t_now.month * 100 + t_now.day_of_month);
+          std::vector<float> loaded(96, NAN);
+
+          if (entsoe_storage_v2::load_today_strict(today_yyyymmdd, loaded)) {
+            ESP_LOGI("entsoe", "boot_recovery_today_script: loaded today's prices from today96 NVS for %u", today_yyyymmdd);
+            id(hourly_prices) = loaded;
+            id(recompute_today_from_current_hourly_vector_script).execute();
+
+            id(last_update_success) = true;
+            id(update_status_message) = std::string("Loaded from NVS (boot)");
+
+            auto t = id(ha_time).now();
+            int cur_idx = (t.hour * 4) + (t.minute / 15);
+            std::string status = "Missing";
+            if (cur_idx >= 0 && cur_idx < 96) {
+              float val = id(hourly_prices)[cur_idx];
+              if (!std::isnan(val)) status = "Valid";
+            }
+            id(current_price_status_str) = status;
+
+            char buf_nvs[60];
+            sprintf(buf_nvs, "Today NVS: Loaded for %04u-%02u-%02u (boot)",
+                    (unsigned)(today_yyyymmdd / 10000),
+                    (unsigned)((today_yyyymmdd / 100) % 100),
+                    (unsigned)(today_yyyymmdd % 100));
+            id(entsoe_today_nvs_status).publish_state(buf_nvs);
+
+            id(current_price_status).update();
+            id(price_update_status).update();
+            id(price_status_message).update();
+            id(current_price).update();
+            id(current_hourly_price).update();
+            id(current_max_hourly_price_percentage).update();
+            id(max_hourly_price_time).update();
+            id(min_hourly_price_time).update();
+
+            // Mark last update source
+            id(entsoe_last_update_source).publish_state("NVS_boot");
+
+          } else {
+            ESP_LOGW("entsoe", "boot_recovery_today_script: today96 load_today_strict failed, scheduling HTTP update");
+            id(last_update_success) = false;
+            id(update_status_message) = std::string("NVS boot load failed, HTTP needed");
+            id(entsoe_today_nvs_status).publish_state("Today NVS: Load FAILED (boot)");
+            id(need_today_update) = true;
+          }
+
+  - id: boot_recovery_tomorrow_script
+    then:
+      - lambda: |-
+          if (id(next_day_boot_recovery_executed)) {
+            ESP_LOGD("entsoe", "boot_recovery_tomorrow_script: already executed, skipping");
+            return;
+          }
+          id(next_day_boot_recovery_executed) = true;
+
+          auto t = id(ha_time).now();
+          if (!t.is_valid()) {
+            ESP_LOGW("entsoe", "boot_recovery_tomorrow_script: time invalid, scheduling HTTP update");
+            id(need_tomorrow_update) = true;
+            return;
+          }
+
+          bool in_window = (t.hour > 13 && t.hour < 23) ||
+                           (t.hour == 13 && t.minute >= 20) ||
+                           (t.hour == 23 && t.minute <= 50);
+          if (!in_window) {
+            ESP_LOGI("entsoe", "boot_recovery_tomorrow_script: not in tomorrow window, no NVS restore or HTTP");
+            return;
+          }
+
+          time_t now_ts = t.timestamp;
+          time_t tmr_ts = now_ts + 86400;
+          struct tm *tm_tmr = localtime(&tmr_ts);
+          if (tm_tmr == nullptr) {
+            ESP_LOGW("entsoe", "boot_recovery_tomorrow_script: localtime for tomorrow failed, scheduling HTTP update");
+            id(need_tomorrow_update) = true;
+            return;
+          }
+
+          uint32_t tomorrow_yyyymmdd = (uint32_t)((tm_tmr->tm_year + 1900) * 10000 +
+                                                  (tm_tmr->tm_mon + 1) * 100 +
+                                                  (tm_tmr->tm_mday));
+
+          std::vector<float> loaded(96, NAN);
+          if (entsoe_storage_v2::load_tomorrow_strict(tomorrow_yyyymmdd, loaded)) {
+            ESP_LOGI("entsoe", "boot_recovery_tomorrow_script: loaded tomorrow's prices from tomorrow96 NVS for %u", tomorrow_yyyymmdd);
+            id(next_day_hourly_prices) = loaded;
+
+            // --- Recompute tomorrow stats & JSON (same as next_day_full_update_logic_script) ---
+
+            auto &n_kwh = id(next_day_hourly_prices);
+            if ((int)n_kwh.size() < 96) {
+              ESP_LOGW("entsoe", "boot_recovery_tomorrow_script: hourly_prices size < 96");
+              id(next_day_last_update_success) = false;
+              id(next_day_update_status_message) = std::string("NVS tomorrow: invalid vector size");
+              return;
+            }
+
+            float min_v = 9999.0, max_v = -9999.0;
+            int min_idx = 0, max_idx = 0;
+            for (int i = 0; i < 96; i++) {
+              if (!std::isnan(n_kwh[i])) {
+                if (n_kwh[i] < min_v) { min_v = n_kwh[i]; min_idx = i; }
+                if (n_kwh[i] > max_v) { max_v = n_kwh[i]; max_idx = i; }
+              }
+            }
+
+            std::vector<float> h_sums(24, 0.0);
+            std::vector<int> h_counts(24, 0);
+            float h_min_v = 9999.0, h_max_v = -9999.0;
+            int h_min_i = 0, h_max_i = 0;
+
+            for (int i = 0; i < 96; i++) {
+              if (!std::isnan(n_kwh[i])) {
+                h_sums[i / 4] += n_kwh[i];
+                h_counts[i / 4]++;
+              }
+            }
+
+            std::string json = "[";
+            double raw_sum_kwh = 0.0;
+            int count_kwh = 0;
+
+            for (int i = 0; i < 24; i++) {
+              if (h_counts[i] > 0) {
+                float h_avg = h_sums[i] / h_counts[i];
+                id(next_day_hourly_avg_prices_kwh)[i] = h_avg;
+                if (h_avg < h_min_v) { h_min_v = h_avg; h_min_i = i; }
+                if (h_avg > h_max_v) { h_max_v = h_avg; h_max_i = i; }
+                char p_buf[10]; sprintf(p_buf, "%.4f", h_avg); json += p_buf;
+                raw_sum_kwh += (double)h_avg;
+                count_kwh++;
+              } else {
+                id(next_day_hourly_avg_prices_kwh)[i] = NAN;
+                json += "null";
+              }
+              if (i < 23) json += ",";
+            }
+            json += "]";
+
+            id(json_next_day_hourly_prices_kwh).publish_state(json.c_str());
+
+            id(next_day_min_price).publish_state(min_v);
+            id(next_day_max_price).publish_state(max_v);
+            char t_buf2[6];
+            sprintf(t_buf2, "%02d:%02d", (min_idx / 4), (min_idx % 4) * 15); id(next_day_min_price_time_str) = t_buf2;
+            sprintf(t_buf2, "%02d:%02d", (max_idx / 4), (max_idx % 4) * 15); id(next_day_max_price_time_str) = t_buf2;
+
+            id(next_day_min_hourly_price).publish_state(h_min_v);
+            id(next_day_max_hourly_price).publish_state(h_max_v);
+            char h_buf2[6];
+            sprintf(h_buf2, "%02d:00", h_min_i); id(next_day_min_hourly_price_time_str) = h_buf2;
+            sprintf(h_buf2, "%02d:00", h_max_i); id(next_day_max_hourly_price_time_str) = h_buf2;
+
+            if (count_kwh > 0) {
+              double f_avg = raw_sum_kwh / (double)count_kwh;
+              id(next_day_avg_price).publish_state((float)f_avg);
+            }
+
+            // --- End recompute block ---
+
+            id(next_day_last_update_success) = true;
+            id(next_day_update_status_message) = std::string("Loaded from NVS (boot)");
+
+            int cur_idx = (t.hour * 4) + (t.minute / 15);
+            std::string status = "Missing";
+            if (cur_idx >= 0 && cur_idx < 96) {
+              float val = id(next_day_hourly_prices)[cur_idx];
+              if (!std::isnan(val)) status = "Valid";
+            }
+            id(next_day_current_price_status_str) = status;
+
+            id(next_day_current_price_status).update();
+            id(next_day_price_update_status).update();
+            id(next_day_price_status_message).update();
+            id(next_day_current_price).update();
+            id(next_day_current_hourly_price).update();
+            id(next_day_current_max_hourly_price_percentage).update();
+            id(next_day_max_hourly_price_time).update();
+            id(next_day_min_hourly_price_time).update();
+
+            char buf_nvs[80];
+            sprintf(buf_nvs, "Tomorrow NVS: Loaded for %04u-%02u-%02u (boot)",
+                    (unsigned)(tomorrow_yyyymmdd / 10000),
+                    (unsigned)((tomorrow_yyyymmdd / 100) % 100),
+                    (unsigned)(tomorrow_yyyymmdd % 100));
+            id(entsoe_tomorrow_nvs_status).publish_state(buf_nvs);
+
+          } else {
+            ESP_LOGW("entsoe", "boot_recovery_tomorrow_script: tomorrow96 load_tomorrow_strict failed, scheduling HTTP update");
+            id(need_tomorrow_update) = true;
+          }
+          
+  - id: load_today_from_nvs_script
+    then:
+      - lambda: |-
+          auto t_now = id(ha_time).now();
+          uint32_t today_yyyymmdd = (uint32_t)(t_now.year * 10000 + t_now.month * 100 + t_now.day_of_month);
+          std::vector<float> loaded(96, NAN);
+          if (!entsoe_storage_v2::load_today_strict(today_yyyymmdd, loaded)) {
+            ESP_LOGW("entsoe", "NVS load_today failed or date mismatch; HTTP fetch required");
+            id(last_update_success) = false;
+            id(update_status_message) = std::string("NVS load failed");
+            return;
+          }
+          id(hourly_prices) = loaded;
+          ESP_LOGI("entsoe", "Loaded today's prices from NVS for %u", today_yyyymmdd);
+          id(recompute_today_from_current_hourly_vector_script).execute();
+          id(update_status_message) = std::string("Loaded from NVS (no API)");
+          id(entsoe_last_update_source).publish_state("NVS_today96");
+
+  - id: clear_today_prices
+    then:
+      - lambda: |-
+          ESP_LOGW("entsoe", "Clearing today's price data (reset to NaN)");
+          id(hourly_prices).assign(96, NAN);
+          id(current_price).publish_state(NAN);
+          id(avg_price).publish_state(NAN);
+          id(min_price).publish_state(NAN);
+          id(max_price).publish_state(NAN);
+          id(current_hourly_price).publish_state(NAN);
+          id(next_hourly_price).publish_state(NAN);
+          id(min_hourly_price).publish_state(NAN);
+          id(max_hourly_price).publish_state(NAN);
+          id(current_max_hourly_price_percentage).publish_state(NAN);
+          id(last_update_success) = false;
+          id(update_status_message) = std::string("Cleared - awaiting NVS or HTTP");
+          id(json_hourly_prices_kwh).publish_state("[]");
+          for (int i = 0; i < 24; i++) {
+            id(hourly_avg_prices_kwh)[i] = NAN;
+          }
+          id(min_price_time_str) = "00:00";
+          id(max_price_time_str) = "00:00";
+          id(min_hourly_price_time_str) = "00:00";
+          id(max_hourly_price_time_str) = "00:00";
+          id(price_update_status).update();
+          id(price_status_message).update();
+          id(current_price_status_str) = "Cleared";
+          id(current_price_status).update();
+
+  - id: clear_tomorrow_prices
+    then:
+      - lambda: |-
+          ESP_LOGW("entsoe", "Clearing tomorrow's price data (reset to NaN)");
+          id(next_day_hourly_prices).assign(96, NAN);
+          id(next_day_current_price).publish_state(NAN);
+          id(next_day_next_price).publish_state(NAN);
+          id(next_day_avg_price).publish_state(NAN);
+          id(next_day_min_price).publish_state(NAN);
+          id(next_day_max_price).publish_state(NAN);
+          id(next_day_current_hourly_price).publish_state(NAN);
+          id(next_day_next_hourly_price).publish_state(NAN);
+          id(next_day_min_hourly_price).publish_state(NAN);
+          id(next_day_max_hourly_price).publish_state(NAN);
+          id(next_day_current_max_hourly_price_percentage).publish_state(NAN);
+          id(json_next_day_hourly_prices_kwh).publish_state("[]");
+          for (int i = 0; i < 24; i++) {
+            id(next_day_hourly_avg_prices_kwh)[i] = NAN;
+          }
+          id(next_day_min_price_time_str) = "00:00";
+          id(next_day_max_price_time_str) = "00:00";
+          id(next_day_min_hourly_price_time_str) = "00:00";
+          id(next_day_max_hourly_price_time_str) = "00:00";
+          id(next_day_last_update_success) = false;
+          id(next_day_update_status_message) = std::string("Cleared - awaiting next 13:20 window");
+          id(next_day_current_price_status_str) = "Cleared";
+          id(next_day_price_update_status).update();
+          id(next_day_price_status_message).update();
+          id(next_day_current_price_status).update();
+          id(entsoe_tomorrow_nvs_status).publish_state("Tomorrow NVS: Cleared - awaiting new 13:20");
