@@ -78,7 +78,9 @@ The implementation uses two dedicated NVS slots:
 
 ### 📁 New Project Files
 
-v4.2.0 introduces two new header files that must be placed in the same directory as your YAML configuration:
+v4.2.0 introduces two new essentioan external price update Home Assistant price update automations, avalable in v4.2.0/crucial_ha_automations/ folder.
+
+v4.2.0 also introduces two new header files that must be placed in the same directory as your YAML configuration:
 
 #### entsoe_storage_v2.h
 This header file implements the NVS storage operations:
