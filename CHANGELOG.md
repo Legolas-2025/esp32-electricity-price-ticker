@@ -3,9 +3,222 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.2.0] - 2026-02-01
+### 🚀 Version 4.2.0: ESP-IDF Migration & NVS Storage for Robust Data Persistence
+**MAJOR ARCHITECTURAL RELEASE**: This version represents a complete architectural overhaul, migrating from the Arduino framework to ESP-IDF and introducing persistent NVS storage for price data. These changes address the reboot issue that was NOT fully resolved in v3.5.0, while providing much better data resilience across device restarts.
+
+> **Important Note About v3.5.0 Reboot Fix**: While v3.5.0 introduced safe scheduling and worker-based execution, the spontaneous reboot issue around midnight and 14:00 was **not fully resolved** for all users. After further investigation, it was determined that the Arduino framework's HTTP client and WiFi stack had inherent limitations that caused stability issues on some setups. v4.2.0 addresses this by migrating to ESP-IDF, which provides a more robust networking stack and better overall stability.
+
+### ⚠️ Important Preamble: The v3.5.0 Reboot Issue Clarification
+
+After releasing v3.5.0, we received reports that some users still experienced spontaneous reboots during scheduled updates, albeit less frequently than before. Upon extensive investigation, we discovered that:
+
+1. **Root Cause**: The Arduino framework's HTTP client, combined with certain WiFi drivers and ESP32 hardware revisions, exhibited intermittent stability issues during long-running HTTP operations.
+2. **Why v3.5.0 Didn't Fully Fix It**: The worker-based execution model in v3.5.0 reduced the likelihood of reboots by moving heavy operations out of time callbacks, but it did not address the underlying framework instability.
+3. **The v4.2.0 Solution**: By migrating to ESP-IDF, we gain access to:
+   - A more stable and mature TCP/IP stack
+   - Better HTTPS/TLS implementation
+   - Improved WiFi driver integration
+   - Native NVS (Non-Volatile Storage) support for persistent data
+
+This migration represents a **significant architectural improvement** that provides the stable foundation needed for a production-grade electricity price ticker.
+
+### 🔄 Platform Migration: Arduino → ESP-IDF
+
+#### Why ESP-IDF?
+
+The ESP-IDF (Espressif IoT Development Framework) is the official development framework for ESP32 and ESP32-S series chips. It offers several advantages over the Arduino framework for this project:
+
+- **More Stable Networking**: The ESP-IDF TCP/IP stack and WiFi drivers are more mature and better tested for production use cases.
+- **Better HTTPS Support**: Native mbedTLS integration provides more reliable HTTPS connections to the ENTSO-E API.
+- **NVS Integration**: Native support for Non-Volatile Storage, enabling persistent storage of price data.
+- **Improved Multitasking**: Better handling of concurrent operations and HTTP requests.
+- **Future-Proofing**: Many new ESP32 features are first made available in ESP-IDF before being ported to Arduino.
+
+#### Migration Considerations
+
+- **Compilation**: ESP-IDF projects require the ESP-IDF toolchain. ESPHome 2026.1.0+ fully supports ESP-IDF projects.
+- **Flash Size**: ESP-IDF requires more flash storage than Arduino. Ensure your ESP32 board has at least 4MB of flash.
+- **No Breaking Changes**: All sensor IDs, entity names, and Home Assistant automations remain fully compatible.
+
+### 💾 NVS Storage Implementation
+
+v4.2.0 introduces persistent storage for electricity prices using the ESP32's built-in NVS (Non-Volatile Storage) system. This provides several key benefits:
+
+#### Two-Slot NVS Architecture
+
+The implementation uses two dedicated NVS slots:
+
+- **today96**: Stores the complete 96-point daily price curve for the current day
+- **tomorrow96**: Stores the complete 96-point daily price curve for the next day
+
+#### How NVS Storage Works
+
+1. **After Successful HTTP Fetch**:
+   - When the ENTSO-E API returns valid price data, the complete 96-point curve is stored in the appropriate NVS slot.
+   - For today's data: stored in today96 with the current date as the key.
+   - For tomorrow's data: stored in tomorrow96 with tomorrow's date as the key.
+
+2. **On Boot Recovery**:
+   - At boot time (:45 seconds), the device attempts to load today's prices from NVS first.
+   - If NVS data exists and matches today's date, it is loaded immediately without waiting for HTTP.
+   - If NVS data is invalid or missing, an HTTP fetch is scheduled.
+   - Similar recovery for tomorrow's data occurs at boot if within the valid window (14:00-23:00).
+
+3. **Midnight Promotion**:
+   - At midnight, the tomorrow96 data can be "promoted" to become today's data.
+   - This eliminates the need for an HTTP fetch at midnight in many cases.
+   - The promotion happens via a dedicated API action or automation trigger.
+
+4. **Benefits**:
+   - **Faster Boot**: Today's prices are available immediately after boot, without waiting for HTTP.
+   - **Data Persistence**: Price data survives device reboots and power cycles.
+   - **Reduced API Calls**: Fewer HTTP requests needed, reducing load on the ENTSO-E API.
+   - **Better Resilience**: Network outages won't leave you without price data.
+
+### 📁 New Project Files
+
+v4.2.0 introduces two new header files that must be placed in the same directory as your YAML configuration:
+
+#### entsoe_storage_v2.h
+This header file implements the NVS storage operations:
+- **store_today()**: Saves today's 96-point price curve to NVS today96 slot
+- **load_today_strict()**: Loads today's prices from NVS, only if the stored date matches today
+- **store_tomorrow()**: Saves tomorrow's 96-point price curve to NVS tomorrow96 slot
+- **load_tomorrow_strict()**: Loads tomorrow's prices from NVS, only if the stored date matches tomorrow
+- **promote_tomorrow_to_today()**: Promotes tomorrow's data to today's slot at midnight
+
+#### entsoe_http_idf.h
+This header file implements ESP-IDF-specific HTTP operations:
+- **fetch()**: Performs HTTPS GET requests to the ENTSO-E API using the ESP-IDF HTTP client
+- **Better error handling**: Improved error codes and status messages for troubleshooting
+- **Timeout management**: More reliable timeout handling for slow network conditions
+
+### Added
+* **ESP-IDF Framework Migration**
+  + Complete migration from Arduino to ESP-IDF framework
+  + Requires ESPHome 2026.1.0 or newer
+  + More stable networking and HTTPS support
+  + Native NVS integration for persistent storage
+* **NVS (Non-Volatile Storage) for Price Data**
+  + Two-slot storage architecture: today96 + tomorrow96
+  + Automatic storage of successful API responses
+  + Boot recovery from NVS before HTTP fetch
+  + Midnight promotion of tomorrow's data to today
+  + Significantly improved data persistence across reboots
+* **New NVS Status Sensors**
+  + `entsoe_today_nvs_status`: Shows NVS operations status for today's data
+  + `entsoe_tomorrow_nvs_status`: Shows NVS operations status for tomorrow's data
+  + Displays stored dates, load/store success/failure
+* **New NVS Management Actions**
+  + `promote_and_load_today_from_nvs`: Promotes tomorrow's NVS data to today and loads it
+  + `load_today_from_nvs`: Loads today's prices from NVS via API action
+  + Enables Home Assistant automations to manage NVS data
+* **Last Update Source Tracking**
+  + `entsoe_last_update_source`: New text sensor indicating the source of the last update
+  + Possible values: "HTTP_today", "NVS_boot", "NVS_promote", "NVS_today96"
+  + Helps diagnose data source issues in automations
+* **Helper Files Documentation**
+  + Added clear documentation on where to place entsoe_storage_v2.h and entsoe_http_idf.h
+  + Includes file content and installation instructions
+
+### Changed
+* **Framework Migration (Arduino → ESP-IDF)**
+  + All HTTP operations now use ESP-IDF's native HTTP client
+  + WiFi and networking stack replaced with ESP-IDF implementation
+  + Build process now compiles with ESP-IDF toolchain
+  + Flash and RAM usage may differ slightly from Arduino version
+* **NVS Storage Architecture**
+  + Price data automatically persisted after successful API fetches
+  + Boot recovery prioritizes NVS over HTTP when valid data exists
+  + Midnight automation can promote tomorrow's data to today via NVS
+  + Reduced dependency on continuous network connectivity
+* **Boot Recovery Logic**
+  + Today's data: Attempts NVS load first, falls back to HTTP if invalid
+  + Tomorrow's data: Attempts NVS load first if within valid window
+  + Faster availability of price data after reboot
+* **Script Execution Flow**
+  + Scripts now store successful results to NVS before completing
+  + Load from NVS is attempted before HTTP fetch in boot recovery
+  + Clear separation between NVS and HTTP operations
+* **API Actions Expansion**
+  + New actions for NVS management and data promotion
+  + Existing verify_price_update action unchanged
+  + Consistent error handling across all actions
+
+### Fixed
+* **Spontaneous Reboots During Scheduled Updates**
+  + ESP-IDF framework provides much more stable networking stack
+  + Eliminates the intermittent reboot issues that persisted in v3.5.0
+  + Root cause: Arduino framework HTTP/WiFi limitations now resolved
+  + Users who experienced reboots in v3.5.0 should see complete resolution
+* **Data Loss on Device Restart**
+  + NVS storage preserves price data across power cycles
+  + Today's prices available immediately after boot
+  + No waiting for HTTP fetch to populate sensors after restart
+* **Midnight Data Gap**
+  + Tomorrow's NVS data can be promoted to today at midnight
+  + Eliminates dependency on HTTP availability at midnight
+  + Much faster sensor availability after midnight
+
+### Technical Improvements
+* **ESP-IDF Framework Benefits**
+  + More mature and stable TCP/IP stack
+  + Better HTTPS/TLS implementation with mbedTLS
+  + Improved WiFi driver integration
+  + Native NVS API access for persistent storage
+  + Better handling of network interruptions
+* **NVS Persistence Layer**
+  + Automatic storage of successful price data
+  + Date-stamped entries prevent stale data usage
+  + Efficient 96-point vector storage
+  + Reliable recovery on boot
+* **Enhanced Boot Recovery**
+  + NVS-first approach for faster data availability
+  + Graceful fallback to HTTP when NVS data is invalid
+  + Automatic promotion path for midnight scenarios
+* **Improved Error Handling**
+  + Better distinction between NVS errors and HTTP errors
+  + Clear status messages for NVS operations
+  + Detailed diagnostics for troubleshooting
+
+### Compatibility
+* **ESPHome**: Requires 2026.1.0+ (for ESP-IDF support)
+* **Home Assistant**: No changes required, all existing integrations work
+* **API**: ENTSO-E API (no changes required)
+* **Hardware**: ESP32 boards with 4MB+ flash recommended for ESP-IDF
+* **Existing Automations**: Continue to work without modification
+* **Secrets**: All existing credentials and settings remain compatible
+* **New NVS Features**: Optional - existing functionality unchanged if NVS unavailable
+
+### Migration Notes
+* **From v3.5.0 to v4.2.0**
+  + **Major Framework Change**: Migrating from Arduino to ESP-IDF
+  + **New Files Required**: You must copy entsoe_storage_v2.h and entsoe_http_idf.h to your ESPHome configuration directory
+  + **ESPHome Version**: Ensure you have ESPHome 2026.1.0 or newer
+  + **Flash Requirements**: ESP-IDF requires more flash; ensure 4MB+ available
+  + **All Sensors Preserved**: All existing today's and tomorrow's sensors work exactly as before
+  + **New NVS Features**: Optional enhancements that don't break existing functionality
+  + **No Breaking Changes**: All entity IDs, automations, and configurations remain compatible
+* **Required Actions**
+  1. Install ESPHome 2026.1.0 or newer
+  2. Copy entsoe_storage_v2.h to your ESPHome configuration directory
+  3. Copy entsoe_http_idf.h to your ESPHome configuration directory
+  4. Replace your YAML file with the v4.2.0 version
+  5. Recompile and flash your ESP32 device
+  6. Verify all sensors appear correctly in Home Assistant
+* **Expected Improvements**
+  + No more spontaneous reboots during scheduled updates
+  + Today's prices available immediately after boot
+  + Price data persists across power cycles
+  + Better stability on unstable networks
+  + Faster recovery from network interruptions
+
 ## [3.5.0] - 2026-01-15
 ### 🛡️ Version 3.5.0: Reboot-Free Scheduled Updates & Pipeline Stability
 **MAJOR STABILITY RELEASE**: This version eliminates spontaneous ESP32 reboots during scheduled ENTSO-E API calls (midnight & 14:00), while preserving 100% backward compatibility with all existing sensors and Home Assistant automations from v3.1.1.
+
+> **NOTE**: As documented in v4.2.0, the reboot issue was NOT fully resolved in v3.5.0. While the worker-based execution model tried to reduce reboot frequency, the underlying Arduino framework instability persisted. v4.2.0 completely resolves this by migrating to ESP-IDF.
 
 The core ENTSO-E parsing logic, forward-fill algorithm, and all sensor IDs remain unchanged. Only the scheduling, execution model, and safety guards were redesigned to prevent overlapping updates and watchdog issues.
 
@@ -75,13 +288,13 @@ The core ENTSO-E parsing logic, forward-fill algorithm, and all sensor IDs remai
     - Ends by resetting: `id(is_updating_tomorrow) = false;`
   + Prevents accidental double invocation when multiple scheduling events fire close together.
 * **Unified Timeout Strategy for All HTTP Requests**
-  + Today’s script (`full_update_logic_script`) now also uses:
+  + Today's script (`full_update_logic_script`) now also uses:
     ```cpp
     http.setTimeout(20000);  // 20 second timeout to avoid long blocks
     ```
   + Aligns with the timeout already used in the tomorrow script from v3.1.1.
   + Ensures that **both** today and tomorrow API calls fail fast on slow responses instead of triggering watchdog resets.
-* **Robust Handling for “No Parsed Data” Scenario**
+* **Robust Handling for "No Parsed Data" Scenario**
   + After parsing XML, both pipelines now explicitly handle the case where `count == 0`:
     - Set `last_update_success` / `next_day_last_update_success` to `false`.
     - Set status messages to `"No data points parsed"`.
@@ -98,6 +311,7 @@ The core ENTSO-E parsing logic, forward-fill algorithm, and all sensor IDs remai
     - Long blocking HTTP + XML parsing inside `on_time` callbacks.
     - Potential overlapping execution of update scripts from multiple triggers (primary + retry + boot recovery).
   + With v3.5.0, scheduled updates for both pipelines can perform full 96-point updates **back-to-back** without causing a reboot.
+  > **NOTE**: This fix was incomplete. See v4.2.0 for the complete solution via ESP-IDF migration.
 * **Overlapping Update Calls from Multiple Triggers**
   + Previously, it was possible for:
     - Midnight main trigger and retry to overlap.
@@ -136,7 +350,7 @@ The core ENTSO-E parsing logic, forward-fill algorithm, and all sensor IDs remai
 * **API**: ENTSO-E API (no changes required)
 * **Hardware**: All ESP32 boards supported; memory usage remains well within typical limits
 * **Existing Automations**:
-  + Fully compatible; all existing entity IDs and behaviors for today’s and tomorrow’s sensors are preserved.
+  + Fully compatible; all existing entity IDs and behaviors for today's and tomorrow's sensors are preserved.
   + The only visible behavior change should be **increased stability** and absence of reboot-induced outages around midnight and 14:00.
 * **New Globals**:
   + `need_today_update`, `is_updating_today`, `need_tomorrow_update`, `is_updating_tomorrow` are internal control flags and do **not** expose new HA entities.
@@ -150,15 +364,17 @@ The core ENTSO-E parsing logic, forward-fill algorithm, and all sensor IDs remai
   + No renaming, removal, or type changes were made to any exposed entities.
 * **Improved Stability at Critical Times**
   + Midnight and 14:00 updates now complete without random reboots.
-  + Today’s sensors remain continuously available even when tomorrow’s 14:00 update is running.
+  + Today's sensors remain continuously available even when tomorrow's 14:00 update is running.
 * **Recommended Upgrade**
   + Strongly recommended for anyone running v3.x who has observed:
     - Reboots around midnight or 14:00.
-    - Temporary “all sensors unavailable” states during scheduled updates.
+    - Temporary "all sensors unavailable" states during scheduled updates.
+* **Important Note**
+  > As documented in v4.2.0 release notes, some users continued to experience reboots after upgrading to v3.5.0. If you experienced this, please upgrade to v4.2.0 which completely resolves the issue via ESP-IDF migration.
 
 ## [3.1.1] - 2025-12-30
 ### 🎉 Version 3.1.1: Next-Day Forecasting & Stability
-**MAJOR RELEASE**: This version introduces next-day price forecasting, complete data pipeline isolation, and significant stability improvements. Enables comparison of today's and tomorrow's prices for[...]
+**MAJOR RELEASE**: This version introduces next-day price forecasting, complete data pipeline isolation, and significant stability improvements. Enables comparison of today's and tomorrow's prices for informed energy consumption decisions.
 
 ### Added
 * **Next-Day Price Forecasting**
@@ -539,7 +755,7 @@ Users upgrading from v1.0.0:
 ### Known Issues (Fixed in later versions)
 * **Midnight Automation**: v2.0.0 had a critical midnight update automation defect
 * **Trigger Timing**: Race conditions between midnight triggers and retry logic
-* All these issues have been resolved in v2.2.1 and v2.3.5
+* All these issues have been resolved in v2.2.1, v3.5.0, and v4.2.0
 
 ## [1.0.0] - 2025-12-15
 ### Added
@@ -568,7 +784,7 @@ Users upgrading from v1.0.0:
 * Multi-platform installation options
 
 ### Technical Features
-* ESP32 Arduino framework integration
+* ESP32 Arduino framework integration (migrated to ESP-IDF in v4.2.0)
 * HTTP client for ENTSO-E API communication
 * XML parsing for market data extraction
 * Template sensors for dynamic calculations
@@ -620,6 +836,7 @@ Users upgrading from v1.0.0:
 ## Version History
 | Version | Date | Changes |
 | --- | --- | --- |
+| 4.2.0 | 2026-02-01 | ESP-IDF migration, NVS storage, complete reboot fix, entsoe_storage_v2.h & entsoe_http_idf.h |
 | 3.5.0 | 2026-01-15 | Reboot-free scheduled updates, safe scheduling flags, worker-based execution, guarded scripts |
 | 3.1.1 | 2025-12-30 | Next-day forecasting, data pipeline isolation, watchdog protection, boot recovery, 7 new sensors |
 | 2.3.5 | 2025-12-23 | Forward-Fill parsing, double precision math, race condition fix, new diagnostic sensors |
@@ -635,8 +852,9 @@ For issues, feature requests, or questions:
 * Review ESP Home logs for error messages
 * Visit the project repository for community support
 * Submit issues on GitHub for bug reports
-* Check ESPHome version compatibility (requires 2025.12.0+ for v2.0.0+)
-* **IMPORTANT**: v3.5.0 removes spontaneous reboots during scheduled updates via safe scheduling & worker execution
+* Check ESPHome version compatibility (requires 2026.1.0+ for v4.2.0, 2025.12.0+ for v3.x)
+* **IMPORTANT**: v4.2.0 fixes the reboot issue completely via ESP-IDF migration and adds NVS persistent storage
+* **IMPORTANT**: v3.5.0 introduced safe scheduling but did NOT fully resolve reboot issues (documented in v4.2.0)
 * **IMPORTANT**: v3.1.1 adds next-day forecasting and stability improvements
 * **IMPORTANT**: v2.3.5 fixes precision issues and adds Forward-Fill parsing for data integrity
 * **IMPORTANT**: v2.2.1 fixes critical midnight automation and retry issues from previous versions
@@ -664,3 +882,6 @@ Contributions are welcome! Please read the contributing guidelines and submit pu
 * Pipeline stability improvements
 * Safe scheduling & worker-based execution for long-running tasks
 * Reboot-free update mechanisms around critical schedule times
+* ESP-IDF framework integration
+* NVS storage implementation and improvements
+* Helper file enhancements (entsoe_storage_v2.h, entsoe_http_idf.h)
