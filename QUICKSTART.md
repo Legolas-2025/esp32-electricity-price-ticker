@@ -23,12 +23,12 @@ Choose one option:
 **Option A: Docker (Recommended)**
 ```bash
 docker run -d \
-  --name esphome \
-  --privileged \
-  -p 6052:6052 \
-  -v /path/to/esphome:/config \
-  -v /etc/localtime:/etc/localtime:ro \
-  ghcr.io/esphome/esphome
+--name esphome \
+--privileged \
+-p 6052:6052 \
+-v /path/to/esphome:/config \
+-v /etc/localtime:/etc/localtime:ro \
+ghcr.io/esphome/esphome
 ```
 
 **Option B: Python pip**
@@ -98,29 +98,29 @@ After setup, you'll have these sensors in Home Assistant:
 **Turn on cheap devices during low-price hours:**
 ```yaml
 automation:
-  - alias: "Use electricity when price is low"
-    trigger:
-      platform: numeric_state
-      entity_id: sensor.current_electricity_price
-      below: 0.15  # 15 cents per kWh
-    action:
-      service: switch.turn_on
-      entity_id: switch.your_device
+- alias: "Use electricity when price is low"
+trigger:
+platform: numeric_state
+entity_id: sensor.current_electricity_price
+below: 0.15  # 15 cents per kWh
+action:
+service: switch.turn_on
+entity_id: switch.your_device
 ```
 
 **Notify when price spikes:**
 ```yaml
 automation:
-  - alias: "High electricity price alert"
-    trigger:
-      platform: numeric_state
-      entity_id: sensor.current_electricity_price
-      above: 0.25  # 25 cents per kWh
-    action:
-      service: notify.mobile_app_your_phone
-      data:
-        title: "High electricity price!"
-        message: "Current price: {{ states('sensor.current_electricity_price') }} €/kWh"
+- alias: "High electricity price alert"
+trigger:
+platform: numeric_state
+entity_id: sensor.current_electricity_price
+above: 0.25  # 25 cents per kWh
+action:
+service: notify.mobile_app_your_phone
+data:
+title: "High electricity price!"
+message: "Current price: {{ states('sensor.current_electricity_price') }} €/kWh"
 ```
 
 ## 🛠️ Troubleshooting
@@ -166,5 +166,3 @@ Default is every 15 minutes. Modify in the time section.
 4. **Check logs regularly** - Monitor for API issues or connectivity problems
 
 ---
-
-**Next Steps**: Read the full README.md for advanced configuration, country codes, and troubleshooting guides!
