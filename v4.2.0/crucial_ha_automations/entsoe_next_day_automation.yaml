@@ -1,4 +1,4 @@
-alias: "ENTSO-E v420: Robust Next-Day HTTP Update (13:50–20:50)"
+alias: "ENTSO-E v420: Next-Day HTTP Update (13:50–20:50)"
 description: >
   At 13:50, press the Force Next Day Update button to fetch tomorrow's prices.
   If that first attempt fails (e.g. ENTSO-E has not published yet or server
