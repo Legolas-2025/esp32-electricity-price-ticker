@@ -363,6 +363,10 @@ Once the firmware is uploaded and the device boots, Home Assistant should automa
 
 For detailed Home Assistant automation examples, visit our [Wiki Home Page](https://github.com/Legolas-2025/esp32-electricity-price-ticker/wiki/Home) and navigate to the Automations section.
 
+### Step 11: Add the two Automations to Home Assistant
+
+⚠️ IMPORTANT: Create the two Home Assistant automations (the price ticker v4.2.0 will NOT function correctly without them), they are available in the v4.2.0/crucial_ha_automations/ subfolder (ENTSO-E v420 HA Automation - ENTSO-E v420 Robust Next-Day HTTP Update 13_50–20_50.yaml and ENTSO-E v420 HA Automation - Midnight Promote - NVS Load - HTTP Fallback.yaml).
+
 ## 6. Configuration
 
 ### Main Configuration Overview
