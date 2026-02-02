@@ -12,7 +12,7 @@ actions:
   # 1. Trigger the update button for tomorrow's prices
   - action: button.press
     target:
-      entity_id: button.entso_e_test_entso_e_force_next_day_update
+      entity_id: button.entso_e_prices_entso_e_force_next_day_update
 
   # 2. Short delay to let the update attempt process
   - delay:
@@ -24,9 +24,9 @@ actions:
         # Continue attempts only if the next day status is not "SUCCESS/Valid"
         - condition: template
           value_template: >
-            {{ not (states('sensor.entso_e_test_next_day_price_update_status')
+            {{ not (states('sensor.entso_e_prices_next_day_price_update_status')
             == 'SUCCESS' and
-                     states('sensor.entso_e_test_next_day_current_price_status') == 'Valid') }}
+                     states('sensor.entso_e_prices_next_day_current_price_status') == 'Valid') }}
 
         # Allow retries up until 20:50
         - condition: template
@@ -43,14 +43,14 @@ actions:
             - conditions:
                 - condition: template
                   value_template: >
-                    {{ not (states('sensor.entso_e_test_next_day_price_update_status')
+                    {{ not (states('sensor.entso_e_prices_next_day_price_update_status')
                     == 'SUCCESS' and
-                             states('sensor.entso_e_test_next_day_current_price_status') == 'Valid') }}
+                             states('sensor.entso_e_prices_next_day_current_price_status') == 'Valid') }}
               sequence:
                 # Press the button to trigger another API call
                 - action: button.press
                   target:
-                    entity_id: button.entso_e_test_entso_e_force_next_day_update
+                    entity_id: button.entso_e_prices_entso_e_force_next_day_update
                 # Delay to process the update attempt
                 - delay:
                     minutes: 2
@@ -61,9 +61,9 @@ actions:
                     message: >
                       Attempting to update tomorrow's prices. Retry index: {{
                       repeat.index }}. Current status: {{
-                      states('sensor.entso_e_test_next_day_price_update_status') }}. Next day
+                      states('sensor.entso_e_prices_next_day_price_update_status') }}. Next day
                       price data: {{
-                      states('sensor.entso_e_test_next_day_hourly_prices_json') }}.
+                      states('sensor.entso_e_prices_next_day_hourly_prices_json') }}.
                     notification_id: entsoe_next_day_update_retry
 
   # 4. Final check after retry loop
@@ -72,8 +72,8 @@ actions:
       - conditions:
           - condition: template
             value_template: >
-              {{ states('sensor.entso_e_test_next_day_price_update_status') == 'SUCCESS'
-                 and states('sensor.entso_e_test_next_day_current_price_status') == 'Valid' }}
+              {{ states('sensor.entso_e_prices_next_day_price_update_status') == 'SUCCESS'
+                 and states('sensor.entso_e_prices_next_day_current_price_status') == 'Valid' }}
         sequence:
           - action: persistent_notification.create
             data:
@@ -81,16 +81,16 @@ actions:
               message: >
                 Tomorrow's prices were updated successfully at some point
                 between 13:50 and 20:50. Last tomorrow update time: {{
-                states('sensor.entso_e_test_next_day_last_price_update_time') }}.
+                states('sensor.entso_e_prices_next_day_last_price_update_time') }}.
               notification_id: entsoe_1350_status
 
       # Failure: Notify if all retries fail
       - conditions:
           - condition: template
             value_template: >
-              {{ not (states('sensor.entso_e_test_next_day_price_update_status')
+              {{ not (states('sensor.entso_e_prices_next_day_price_update_status')
               == 'SUCCESS' and
-                       states('sensor.entso_e_test_next_day_current_price_status') == 'Valid') }}
+                       states('sensor.entso_e_prices_next_day_current_price_status') == 'Valid') }}
         sequence:
           # Persistent error notification
           - action: persistent_notification.create
@@ -99,9 +99,9 @@ actions:
               message: >
                 Failed to populate tomorrow's prices between 13:50 and 20:50,
                 even after repeated HTTP retries. Error status: {{
-                states('sensor.entso_e_test_next_day_price_update_status') }}.
+                states('sensor.entso_e_prices_next_day_price_update_status') }}.
                 Last next-day update time: {{
-                states('sensor.entso_e_test_next_day_last_price_update_time') }}.
+                states('sensor.entso_e_prices_next_day_last_price_update_time') }}.
               notification_id: entsoe_1350_error
 
           # Mobile push notification for errors
@@ -111,7 +111,7 @@ actions:
               message: >
                 Failed to populate tomorrow's prices between 13:50 and 20:50.
                 Error status: {{
-                states('sensor.entso_e_test_next_day_price_update_status') }}.
+                states('sensor.entso_e_prices_next_day_price_update_status') }}.
                 Last update attempt: {{
-                states('sensor.entso_e_test_next_day_last_price_update_time') }}.
+                states('sensor.entso_e_prices_next_day_last_price_update_time') }}.
 mode: single
