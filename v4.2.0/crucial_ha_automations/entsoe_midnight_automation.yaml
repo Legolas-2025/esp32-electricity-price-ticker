@@ -4,17 +4,26 @@ description: >
   into today's data and correctly populate sensors. If promotion fails (e.g., partial
   failure or invalid data), fall back to clearing and reloading from NVS. Finally,
   try HTTP as a last resort. Accurate notifications and retries ensure a reliable turnover.
+
 triggers:
+  # Run exactly at midnight
   - trigger: time
     at: "00:00:00"
+
 conditions: []
-# 1. Attempt to promote tomorrow96 -> today96 from NVS using ESPHome API
+
 actions:
+  # 1) Primary path: call ESPHome action to promote tomorrow96 -> today96 and load it
   - action: esphome.entso_e_test_promote_and_load_today_from_nvs
+
+  # Give ESPHome a moment to process and recompute stats
   - delay:
       seconds: 10
+
+  # 2) Decide based on ESPHome sensors whether promote+load succeeded
   - choose:
-      # NVS-promotion success path
+      # 2a) NVS-promotion success path
+      #     Use only the "last update source" = NVS_promote plus SUCCESS/Valid as the success signal.
       - conditions:
           - condition: template
             value_template: >
@@ -25,7 +34,11 @@ actions:
                  and cur == 'Valid'
                  and src == 'NVS_promote' }}
         sequence:
+          # Clear tomorrow's RAM sensors after successful promotion, so UI clearly shows
+          # that tomorrow is not yet known for the new day
           - action: esphome.entso_e_test_clear_tomorrow_prices
+
+          # Notify that midnight promotion succeeded from NVS
           - action: persistent_notification.create
             data:
               title: ENTSO-E Midnight NVS Promote Success
@@ -33,85 +46,94 @@ actions:
                 Today's prices were promoted from tomorrow96 and loaded from NVS at midnight.
                 Last update time: {{ states('sensor.entso_e_test_last_price_update_time') }}
               notification_id: entsoe_midnight_status
-      # Fallback path (promotion failed or source not NVS_promote)
+
+      # 2b) Fallback path: promotion failed or did not report src == NVS_promote
       - conditions:
           - condition: template
             value_template: >
-              {% set src    = states('sensor.entso_e_test_entso_e_last_update_source') | default('') %}
+              {% set src = states('sensor.entso_e_test_entso_e_last_update_source') | default('') %}
               {{ src != 'NVS_promote' }}
         sequence:
+          # 2b-1) Clear in-memory today and tomorrow data before trying any other path
           - action: esphome.entso_e_test_clear_today_prices
           - action: esphome.entso_e_test_clear_tomorrow_prices
+
+          # 2b-2) Try to reload today's curve directly from NVS today96
           - action: esphome.entso_e_test_load_today_from_nvs
+
+          # Wait a bit so ESPHome can recompute stats and publish sensor values
           - delay:
               seconds: 20
+
+          # 2b-3) Check if the NVS today96 load succeeded (no HTTP needed)
           - choose:
+              # 2b-3a) NVS today96 load success → use that and stop
               - conditions:
                   - condition: template
                     value_template: >
-                      {% set status =
-                      states('sensor.entso_e_test_price_update_status') %} {%
-                      set cur    =
-                      states('sensor.entso_e_test_current_price_status') %} {%
-                      set src    =
-                      states('sensor.entso_e_test_entso_e_last_update_source') |
-                      default('') %} {{ status == 'SUCCESS' and cur == 'Valid'
-                      and src == 'NVS_today96' }}
+                      {% set status = states('sensor.entso_e_test_price_update_status') %}
+                      {% set cur    = states('sensor.entso_e_test_current_price_status') %}
+                      {% set src    = states('sensor.entso_e_test_entso_e_last_update_source') | default('') %}
+                      {{ status == 'SUCCESS'
+                         and cur == 'Valid'
+                         and src == 'NVS_today96' }}
                 sequence:
                   - action: persistent_notification.create
                     data:
                       title: ENTSO-E Midnight NVS (today96) Success
                       message: >
                         Today's prices were loaded from today96 NVS at midnight
-                        after promote failed or was unavailable. Last update
-                        time: {{
+                        after promote failed or was unavailable. Last update time: {{
                         states('sensor.entso_e_test_last_price_update_time') }}
                       notification_id: entsoe_midnight_status
+
+              # 2b-3b) NVS today96 load also failed → HTTP fallback via Force Update
               - conditions:
                   - condition: template
                     value_template: >
-                      {% set status =
-                      states('sensor.entso_e_test_price_update_status') %} {%
-                      set cur    =
-                      states('sensor.entso_e_test_current_price_status') %} {%
-                      set src    =
-                      states('sensor.entso_e_test_entso_e_last_update_source') |
-                      default('') %} {{ not (status == 'SUCCESS' and cur ==
-                      'Valid' and src == 'NVS_today96') }}
+                      {% set status = states('sensor.entso_e_test_price_update_status') %}
+                      {% set cur    = states('sensor.entso_e_test_current_price_status') %}
+                      {% set src    = states('sensor.entso_e_test_entso_e_last_update_source') | default('') %}
+                      {{ not (status == 'SUCCESS'
+                              and cur == 'Valid'
+                              and src == 'NVS_today96') }}
                 sequence:
+                  # 2b-3b-1) Small delay before HTTP retries
                   - delay:
                       minutes: 1
+
+                  # 2b-3b-2) Press Force Update button up to 3 times, 2 minutes apart,
+                  #            stopping early if SUCCESS + Valid + HTTP_today
                   - repeat:
                       while:
                         - condition: template
                           value_template: >
-                            {% set status =
-                            states('sensor.entso_e_test_price_update_status') %}
-                            {% set cur    =
-                            states('sensor.entso_e_test_current_price_status')
-                            %} {% set src    =
-                            states('sensor.entso_e_test_entso_e_last_update_source')
-                            | default('') %} {{ repeat.index <= 3 and not
-                            (status == 'SUCCESS' and cur == 'Valid' and src ==
-                            'HTTP_today') }}
+                            {% set status = states('sensor.entso_e_test_price_update_status') %}
+                            {% set cur    = states('sensor.entso_e_test_current_price_status') %}
+                            {% set src    = states('sensor.entso_e_test_entso_e_last_update_source') | default('') %}
+                            {{ repeat.index <= 3
+                               and not (status == 'SUCCESS'
+                                        and cur == 'Valid'
+                                        and src == 'HTTP_today') }}
                       sequence:
                         - action: button.press
                           target:
                             entity_id: button.entso_e_test_entso_e_force_update
                         - delay:
                             minutes: 2
+
+                  # 2b-3b-3) After HTTP retries, decide final outcome
                   - choose:
+                      # 2b-3b-3a) HTTP succeeded
                       - conditions:
                           - condition: template
                             value_template: >
-                              {% set status =
-                              states('sensor.entso_e_test_price_update_status')
-                              %} {% set cur    =
-                              states('sensor.entso_e_test_current_price_status')
-                              %} {% set src    =
-                              states('sensor.entso_e_test_entso_e_last_update_source')
-                              | default('') %} {{ status == 'SUCCESS' and cur ==
-                              'Valid' and src == 'HTTP_today' }}
+                              {% set status = states('sensor.entso_e_test_price_update_status') %}
+                              {% set cur    = states('sensor.entso_e_test_current_price_status') %}
+                              {% set src    = states('sensor.entso_e_test_entso_e_last_update_source') | default('') %}
+                              {{ status == 'SUCCESS'
+                                 and cur == 'Valid'
+                                 and src == 'HTTP_today' }}
                         sequence:
                           - action: persistent_notification.create
                             data:
@@ -119,20 +141,19 @@ actions:
                               message: >
                                 Today's prices were fetched from HTTP after
                                 fallback retries. Last update time: {{
-                                states('sensor.entso_e_test_last_price_update_time')
-                                }}
+                                states('sensor.entso_e_test_last_price_update_time') }}
                               notification_id: entsoe_midnight_status
+
+                      # 2b-3b-3b) HTTP also failed → final error notification + mobile push
                       - conditions:
                           - condition: template
                             value_template: >
-                              {% set status =
-                              states('sensor.entso_e_test_price_update_status')
-                              %} {% set cur    =
-                              states('sensor.entso_e_test_current_price_status')
-                              %} {% set src    =
-                              states('sensor.entso_e_test_entso_e_last_update_source')
-                              | default('') %} {{ not (status == 'SUCCESS' and
-                              cur == 'Valid' and src == 'HTTP_today') }}
+                              {% set status = states('sensor.entso_e_test_price_update_status') %}
+                              {% set cur    = states('sensor.entso_e_test_current_price_status') %}
+                              {% set src    = states('sensor.entso_e_test_entso_e_last_update_source') | default('') %}
+                              {{ not (status == 'SUCCESS'
+                                      and cur == 'Valid'
+                                      and src == 'HTTP_today') }}
                         sequence:
                           - action: persistent_notification.create
                             data:
@@ -140,14 +161,13 @@ actions:
                               message: >
                                 Failed to populate today's prices after NVS
                                 promote, NVS load, and HTTP retries. Status: {{
-                                states('sensor.entso_e_test_price_update_status')
-                                }}. Current slot status: {{
-                                states('sensor.entso_e_test_current_price_status')
-                                }}. Last update source: {{
-                                states('sensor.entso_e_test_entso_e_last_update_source')
-                                }}. Last update time (if any): {{
-                                states('sensor.entso_e_test_last_price_update_time')
-                                }}.
+                                states('sensor.entso_e_test_price_update_status') }}.
+                                Current slot status: {{
+                                states('sensor.entso_e_test_current_price_status') }}.
+                                Last update source: {{
+                                states('sensor.entso_e_test_entso_e_last_update_source') }}.
+                                Last update time (if any): {{
+                                states('sensor.entso_e_test_last_price_update_time') }}.
                               notification_id: entsoe_midnight_error
                           - action: notify.mobile_app_sm_s911b
                             data:
@@ -155,12 +175,12 @@ actions:
                               message: >
                                 Failed to populate today's prices after NVS
                                 promote, NVS load, and HTTP retries. Status: {{
-                                states('sensor.entso_e_test_price_update_status')
-                                }}. Current slot status: {{
-                                states('sensor.entso_e_test_current_price_status')
-                                }}. Last update source: {{
-                                states('sensor.entso_e_test_entso_e_last_update_source')
-                                }}. Last update time (if any): {{
-                                states('sensor.entso_e_test_last_price_update_time')
-                                }}.
+                                states('sensor.entso_e_test_price_update_status') }}.
+                                Current slot status: {{
+                                states('sensor.entso_e_test_current_price_status') }}.
+                                Last update source: {{
+                                states('sensor.entso_e_test_entso_e_last_update_source') }}.
+                                Last update time (if any): {{
+                                states('sensor.entso_e_test_last_price_update_time') }}.
+
 mode: single
