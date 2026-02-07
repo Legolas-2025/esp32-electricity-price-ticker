@@ -72,10 +72,25 @@ api:
               id(entsoe_today_nvs_status).publish_state("NVS promote: time invalid");
               return;
             }
-            uint32_t today_yyyymmdd = (uint32_t)(t_now.year * 10000 + t_now.month * 100 + t_now.day_of_month);
 
-            if (!entsoe_storage_v2::promote_tomorrow_to_today(today_yyyymmdd)) {
-              ESP_LOGW("entsoe", "promote_and_load_today_from_nvs: promotion failed");
+            // Compute NEW "today" at the moment we run this (local calendar date)
+            time_t now_ts = t_now.timestamp;
+            struct tm *tm_new_today = localtime(&now_ts);
+            if (tm_new_today == nullptr) {
+              ESP_LOGW("entsoe", "promote_and_load_today_from_nvs: localtime failed");
+              id(last_update_success) = false;
+              id(update_status_message) = std::string("NVS promote: localtime failed");
+              id(entsoe_today_nvs_status).publish_state("NVS promote: localtime failed");
+              return;
+            }
+
+            uint32_t new_today_yyyymmdd = (uint32_t)((tm_new_today->tm_year + 1900) * 10000 +
+                                                     (tm_new_today->tm_mon + 1) * 100 +
+                                                     tm_new_today->tm_mday);
+
+            // Try to promote tomorrow96 -> today96 for NEW today
+            if (!entsoe_storage_v2::promote_tomorrow_to_today(new_today_yyyymmdd)) {
+              ESP_LOGW("entsoe", "promote_and_load_today_from_nvs: promotion failed for %u", new_today_yyyymmdd);
               id(last_update_success) = false;
               id(update_status_message) = std::string("NVS promote failed");
               id(entsoe_today_nvs_status).publish_state("Today NVS: Promote FAILED");
@@ -83,8 +98,8 @@ api:
             }
 
             std::vector<float> loaded(96, NAN);
-            if (!entsoe_storage_v2::load_today_strict(today_yyyymmdd, loaded)) {
-              ESP_LOGW("entsoe", "promote_and_load_today_from_nvs: load_today_strict failed after promote");
+            if (!entsoe_storage_v2::load_today_strict(new_today_yyyymmdd, loaded)) {
+              ESP_LOGW("entsoe", "promote_and_load_today_from_nvs: load_today_strict failed after promote for %u", new_today_yyyymmdd);
               id(last_update_success) = false;
               id(update_status_message) = std::string("NVS load after promote failed");
               id(entsoe_today_nvs_status).publish_state("Today NVS: Load FAILED after promote");
@@ -92,7 +107,7 @@ api:
             }
 
             id(hourly_prices) = loaded;
-            ESP_LOGI("entsoe", "promote_and_load_today_from_nvs: loaded today's prices from NVS for %u", today_yyyymmdd);
+            ESP_LOGI("entsoe", "promote_and_load_today_from_nvs: loaded today's prices from NVS for %u", new_today_yyyymmdd);
             id(recompute_today_from_current_hourly_vector_script).execute();
 
             id(last_update_success) = true;
@@ -109,9 +124,9 @@ api:
 
             char buf_nvs[60];
             sprintf(buf_nvs, "Today NVS: Promoted & Loaded for %04u-%02u-%02u",
-                    (unsigned)(today_yyyymmdd / 10000),
-                    (unsigned)((today_yyyymmdd / 100) % 100),
-                    (unsigned)(today_yyyymmdd % 100));
+                    (unsigned)(new_today_yyyymmdd / 10000),
+                    (unsigned)((new_today_yyyymmdd / 100) % 100),
+                    (unsigned)(new_today_yyyymmdd % 100));
             id(entsoe_today_nvs_status).publish_state(buf_nvs);
 
             id(price_update_status).update();
