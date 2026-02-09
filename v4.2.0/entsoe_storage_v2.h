@@ -168,18 +168,28 @@ inline bool load_tomorrow_strict(uint32_t tomorrow_yyyymmdd, std::vector<float> 
   return load_curve_strict(KEY_TOMORROW, tomorrow_yyyymmdd, out_prices_96);
 }
 
-// Optional: promote tomorrow96 -> today96 when day rolls over (if dates match)
-inline bool promote_tomorrow_to_today(uint32_t today_yyyymmdd) {
+/**
+ * Promote tomorrow96 -> today96 for a given NEW today date.
+ *
+ * Expected semantics:
+ * - "tomorrow96" is stored with its own date yyyymmdd (the day the curve applies to).
+ * - At midnight when local calendar day becomes new_today_yyyymmdd, we:
+ *     - load tomorrow96 for new_today_yyyymmdd
+ *     - store that curve into today96 for new_today_yyyymmdd
+ */
+inline bool promote_tomorrow_to_today(uint32_t new_today_yyyymmdd) {
   std::vector<float> prices_96;
-  if (!load_curve_strict(KEY_TOMORROW, today_yyyymmdd, prices_96)) {
-    ESP_LOGW(TAG, "promote_tomorrow_to_today: unable to load tomorrow96 for today=%u", today_yyyymmdd);
+  // Load the tomorrow96 curve whose date matches the NEW today
+  if (!load_tomorrow_strict(new_today_yyyymmdd, prices_96)) {
+    ESP_LOGW(TAG, "promote_tomorrow_to_today: unable to load tomorrow96 for new_today=%u", new_today_yyyymmdd);
     return false;
   }
-  if (!store_curve(KEY_TODAY, today_yyyymmdd, prices_96)) {
-    ESP_LOGW(TAG, "promote_tomorrow_to_today: failed to store today96");
+  // Store into today96 with the same date
+  if (!store_today(new_today_yyyymmdd, prices_96)) {
+    ESP_LOGW(TAG, "promote_tomorrow_to_today: failed to store today96 for %u", new_today_yyyymmdd);
     return false;
   }
-  ESP_LOGI(TAG, "promote_tomorrow_to_today: promoted tomorrow96 to today96 for date %u", today_yyyymmdd);
+  ESP_LOGI(TAG, "promote_tomorrow_to_today: promoted tomorrow96 to today96 for date %u", new_today_yyyymmdd);
   return true;
 }
 
