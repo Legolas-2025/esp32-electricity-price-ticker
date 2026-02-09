@@ -73,50 +73,25 @@ api:
               return;
             }
 
-            // Compute NEW "today" (calendar day at the moment we run this)
-            time_t now_ts = t_now.timestamp;
-            struct tm *tm_new_today = localtime(&now_ts);
-            if (tm_new_today == nullptr) {
-              ESP_LOGW("entsoe", "promote_and_load_today_from_nvs: localtime failed");
-              id(last_update_success) = false;
-              id(update_status_message) = std::string("NVS promote: localtime failed");
-              id(entsoe_today_nvs_status).publish_state("NVS promote: localtime failed");
-              return;
-            }
+            // NEW today (local calendar date when this runs)
+            uint32_t new_today_yyyymmdd = (uint32_t)(t_now.year * 10000 +
+                                                     t_now.month * 100 +
+                                                     t_now.day_of_month);
 
-            uint32_t new_today_yyyymmdd = (uint32_t)((tm_new_today->tm_year + 1900) * 10000 +
-                                                     (tm_new_today->tm_mon + 1) * 100 +
-                                                     tm_new_today->tm_mday);
-
-            // Compute YESTERDAY (for the NVS helper's "today" argument)
-            time_t y_ts = now_ts - 86400;
-            struct tm *tm_yesterday = localtime(&y_ts);
-            if (tm_yesterday == nullptr) {
-              ESP_LOGW("entsoe", "promote_and_load_today_from_nvs: localtime for yesterday failed");
-              id(last_update_success) = false;
-              id(update_status_message) = std::string("NVS promote: localtime yesterday failed");
-              id(entsoe_today_nvs_status).publish_state("NVS promote: localtime yesterday failed");
-              return;
-            }
-
-            uint32_t yesterday_yyyymmdd = (uint32_t)((tm_yesterday->tm_year + 1900) * 10000 +
-                                                     (tm_yesterday->tm_mon + 1) * 100 +
-                                                     tm_yesterday->tm_mday);
-
-            // Use yesterday_yyyymmdd for promotion, because NVS helper expects "today" for which tomorrow96 is stored
-            if (!entsoe_storage_v2::promote_tomorrow_to_today(yesterday_yyyymmdd)) {
-              ESP_LOGW("entsoe", "promote_and_load_today_from_nvs: promotion failed for yesterday=%u (new_today=%u)",
-                       yesterday_yyyymmdd, new_today_yyyymmdd);
+            // Promote tomorrow96 -> today96 for NEW today
+            if (!entsoe_storage_v2::promote_tomorrow_to_today(new_today_yyyymmdd)) {
+              ESP_LOGW("entsoe", "promote_and_load_today_from_nvs: promotion failed for %u", new_today_yyyymmdd);
               id(last_update_success) = false;
               id(update_status_message) = std::string("NVS promote failed");
               id(entsoe_today_nvs_status).publish_state("Today NVS: Promote FAILED");
               return;
             }
 
-            // But always load today using NEW today's date
+            // Load today's curve from today96 after promotion
             std::vector<float> loaded(96, NAN);
             if (!entsoe_storage_v2::load_today_strict(new_today_yyyymmdd, loaded)) {
-              ESP_LOGW("entsoe", "promote_and_load_today_from_nvs: load_today_strict failed after promote for %u", new_today_yyyymmdd);
+              ESP_LOGW("entsoe", "promote_and_load_today_from_nvs: load_today_strict failed after promote for %u",
+                       new_today_yyyymmdd);
               id(last_update_success) = false;
               id(update_status_message) = std::string("NVS load after promote failed");
               id(entsoe_today_nvs_status).publish_state("Today NVS: Load FAILED after promote");
@@ -124,12 +99,14 @@ api:
             }
 
             id(hourly_prices) = loaded;
-            ESP_LOGI("entsoe", "promote_and_load_today_from_nvs: loaded today's prices from NVS for %u", new_today_yyyymmdd);
+            ESP_LOGI("entsoe", "promote_and_load_today_from_nvs: loaded today's prices from NVS for %u",
+                     new_today_yyyymmdd);
             id(recompute_today_from_current_hourly_vector_script).execute();
 
             id(last_update_success) = true;
             id(update_status_message) = std::string("Loaded from NVS (promote+load)");
 
+            // Determine current price status (Valid/Missing) from the promoted curve
             auto t = id(ha_time).now();
             int cur_idx = (t.hour * 4) + (t.minute / 15);
             std::string status = "Missing";
@@ -180,7 +157,9 @@ api:
             std::string status = "Missing";
             if (cur_idx >= 0 && cur_idx < 96) {
               float val = id(hourly_prices)[cur_idx];
-              if (!std::isnan(val)) status = "Valid";
+              if (!std::isnan(val)) {
+                status = "Valid";
+              }
             } else {
               status = "Missing";
             }
