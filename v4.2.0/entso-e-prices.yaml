@@ -73,10 +73,12 @@ api:
               return;
             }
 
-            // NEW today (local calendar date when this runs)
+            // NEW today: local calendar date when this runs (e.g. 2026-02-11 at 00:00:xx)
             uint32_t new_today_yyyymmdd = (uint32_t)(t_now.year * 10000 +
                                                      t_now.month * 100 +
                                                      t_now.day_of_month);
+
+            ESP_LOGI("entsoe", "promote_and_load_today_from_nvs: new_today_yyyymmdd=%u", new_today_yyyymmdd);
 
             // Promote tomorrow96 -> today96 for NEW today
             if (!entsoe_storage_v2::promote_tomorrow_to_today(new_today_yyyymmdd)) {
