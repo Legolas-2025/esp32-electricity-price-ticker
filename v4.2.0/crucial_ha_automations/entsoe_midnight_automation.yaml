@@ -8,7 +8,7 @@ description: >
 triggers:
   # Run exactly at midnight
   - trigger: time
-    at: "00:00:00"
+    at: "00:00:05"
 
 conditions: []
 
