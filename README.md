@@ -10,12 +10,156 @@
 
 Inspired by the [hass-entso-e project](https://github.com/JaccoR/hass-entso-e). For detailed documentation, FAQ and troubleshooting, visit our [Wiki Home Page](https://github.com/Legolas-2025/esp32-electricity-price-ticker/wiki/Home).
 
-> **Current Stable Version: v4.2.0**
-> v4.2.0 is a **major architectural release** that moves all scheduling logic to external Home Assistant automations for maximum flexibility and control.
-> **CRITICAL REQUIREMENT**: v4.2.0 requires two external Home Assistant automations from the `v4.2.0/crucial_ha_automations/` folder. Without these automations, your prices will never update.
+> **Current Stable Version: v4.3.0**
+> 
+> v4.2.0 inroduced a **major architectural release** that moves all scheduling logic to external Home Assistant automations for maximum flexibility and control.
+> **CRITICAL REQUIREMENT**: v4.2.0+ requires two external Home Assistant automations from the `v4.2.0/crucial_ha_automations/` folder. Without these automations, your prices will never update.
 > Key improvements include: ESP-IDF framework for stability, NVS persistent storage for data retention across power cycles, optimized HTTP client, and the two helper files `entsoe_storage_v2.h` and `entsoe_http_idf.h`.
 
-## Table of Contents
+## ⚠️ Important: v4.2.0 may no longer compile (ESPHome 2026.x / newer ESP-IDF platforms)
+
+Some users running newer ESPHome + ESP-IDF toolchains (notably when ESPHome pulls the **pioarduino** ESP-IDF-based platform) can hit compile errors like:
+
+- `fatal error: esp_http_client/esp_http_client.h: No such file or directory`
+
+### Why this happens
+In newer builds, the ESP-IDF headers for certain built-in components (like `esp_http_client`) may **not be exposed to the compilation unit by default** unless they are explicitly included as built-in IDF components.
+
+In v4.2.0 the helper header relied on the classic include style:
+
+- `#include "esp_http_client.h"`
+
+…which worked in many setups, but became brittle across platform changes.
+
+### What changed in v4.3.0 to fix compilation
+v4.3.0 introduces **two complementary fixes**:
+
+1. **ESPHome YAML change (ESP-IDF advanced setting)**  
+   In the main YAML, under:
+
+```yaml
+esp32:
+  framework:
+    type: esp-idf
+    advanced:
+      include_builtin_idf_components:
+        - esp_http_client
+        - esp-tls
+        - mbedtls
+        - esp_crt_bundle
+```
+
+This forces ESPHome/PlatformIO to make those ESP-IDF components (and their headers) available during compilation.
+
+2. **Helper header include path fix**  
+   In `entsoe_http_idf.h`, ESP-IDF headers must be included using the **component path** form in ESPHome ESP-IDF builds:
+
+```cpp
+#include "esp_http_client/esp_http_client.h"
+#include "esp_crt_bundle.h"
+#include "esp_log.h"
+```
+
+(Instead of relying on `#include "esp_http_client.h"`.)
+
+Together these changes make the build robust again.
+
+---
+
+## New in v4.3.0: 15-minute JSON sensors (and why they are split)
+
+### Background: HA “unknown” issue for long text states
+Home Assistant commonly enforces a maximum length for a sensor’s state string (often ~255 chars for many entities).  
+A full 96-point 15-minute JSON array is typically **~650–750 characters**, so even if ESPHome publishes it (you’ll see it in logs), HA may keep the entity state as **`unknown`**.
+
+### Solution in v4.3.0
+v4.3.0 publishes the 15-minute JSON as **3 smaller text sensors** (chunks), which HA accepts reliably.
+
+### New 15-minute JSON text sensors (TODAY)
+- `text_sensor.entso_e_prices_json_15min_prices_kwh_p1` (values 0–31)
+- `text_sensor.entso_e_prices_json_15min_prices_kwh_p2` (values 32–63)
+- `text_sensor.entso_e_prices_json_15min_prices_kwh_p3` (values 64–95)
+
+### New 15-minute JSON text sensors (TOMORROW / NEXT DAY)
+- `text_sensor.entso_e_prices_json_next_day_15min_prices_kwh_p1` (values 0–31)
+- `text_sensor.entso_e_prices_json_next_day_15min_prices_kwh_p2` (values 32–63)
+- `text_sensor.entso_e_prices_json_next_day_15min_prices_kwh_p3` (values 64–95)
+
+> Note: v4.2.0 already exposed the 24-hour hourly JSON (which is short enough).  
+> v4.3.0 adds *15-minute* JSON and splits it to avoid HA state length limits.
+
+---
+
+## Home Assistant: combine P1 + P2 + P3 into one “full JSON” sensor
+
+If you still want a single entity in HA that contains the complete 96-point JSON string, create a Template sensor in HA that concatenates the three parts.
+
+### Option A: Template integration (recommended, modern HA)
+Add this to your HA config (or via UI helpers if you manage templates there):
+
+```yaml
+template:
+  - sensor:
+      - name: "ENTSO-E 15-min Prices JSON (Today, combined)"
+        unique_id: entsoe_15min_prices_json_today_combined
+        state: >-
+          {% set p1 = states('text_sensor.entso_e_prices_json_15min_prices_kwh_p1') %}
+          {% set p2 = states('text_sensor.entso_e_prices_json_15min_prices_kwh_p2') %}
+          {% set p3 = states('text_sensor.entso_e_prices_json_15min_prices_kwh_p3') %}
+          {% if p1 in ['unknown','unavailable',''] or p2 in ['unknown','unavailable',''] or p3 in ['unknown','unavailable',''] %}
+            unknown
+          {% else %}
+            {{ p1 ~ p2 ~ p3 }}
+          {% endif %}
+        icon: mdi:code-json
+```
+
+And for tomorrow:
+
+```yaml
+template:
+  - sensor:
+      - name: "ENTSO-E 15-min Prices JSON (Tomorrow, combined)"
+        unique_id: entsoe_15min_prices_json_tomorrow_combined
+        state: >-
+          {% set p1 = states('text_sensor.entso_e_prices_json_next_day_15min_prices_kwh_p1') %}
+          {% set p2 = states('text_sensor.entso_e_prices_json_next_day_15min_prices_kwh_p2') %}
+          {% set p3 = states('text_sensor.entso_e_prices_json_next_day_15min_prices_kwh_p3') %}
+          {% if p1 in ['unknown','unavailable',''] or p2 in ['unknown','unavailable',''] or p3 in ['unknown','unavailable',''] %}
+            unknown
+          {% else %}
+            {{ p1 ~ p2 ~ p3 }}
+          {% endif %}
+        icon: mdi:code-json
+```
+
+### Important note (HA state length)
+This combined sensor may still show `unknown` in HA if HA enforces a state-length limit for *that* entity type too.  
+If that happens, keep using the P1/P2/P3 sensors (recommended) or store/parse the values differently (attributes, files, MQTT, etc.).
+
+---
+
+## Backward compatibility notes (v4.2.0 -> v4.3.0)
+
+### Will existing v4.2.0 HA automations still work?
+Yes, if you replace your `v4.2.0/entso-e-prices.yaml` with the v4.3.0 YAML (and keep the same device name/entity ids), the critical automation integration points remain the same:
+
+- ESPHome API actions:
+  - `esphome.entso_e_prices_promote_and_load_today_from_nvs`
+  - `esphome.entso_e_prices_load_today_from_nvs`
+  - `esphome.entso_e_prices_clear_today_prices`
+  - `esphome.entso_e_prices_clear_tomorrow_prices`
+- Buttons (force updates) remain (used by automations)
+- Status sensors used by automations remain:
+  - `sensor.entso_e_prices_price_update_status`
+  - `sensor.entso_e_prices_current_price_status`
+  - `sensor.entso_e_prices_entso_e_last_update_source`
+  - and the next-day equivalents
+
+The main “compat” change is: **new sensors were added**, not removed, and the 15-min JSON is now provided as split chunks to avoid HA limits.
+
+
+## Table of Contents (content from here on unchanged from version v4.2.0) 
 
 1. [Project Overview](#1-project-overview)
 2. [Hardware and Software Requirements](#2-hardware-and-software-requirements)
