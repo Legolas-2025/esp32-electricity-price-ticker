@@ -76,66 +76,17 @@ A full 96-point 15-minute JSON array is typically **~650–750 characters**, so 
 v4.3.0 publishes the 15-minute JSON as **3 smaller text sensors** (chunks), which HA accepts reliably.
 
 ### New 15-minute JSON text sensors (TODAY)
-- `text_sensor.entso_e_prices_json_15min_prices_kwh_p1` (values 0–31)
-- `text_sensor.entso_e_prices_json_15min_prices_kwh_p2` (values 32–63)
-- `text_sensor.entso_e_prices_json_15min_prices_kwh_p3` (values 64–95)
+- `sensor.entso_e_prices_entso_e_15_min_prices_eur_kwh_json_p1_00_00_07_45` (values 0–31)
+- `sensor.entso_e_prices_entso_e_15_min_prices_eur_kwh_json_p2_08_00_15_45` (values 32–63)
+- `sensor.entso_e_prices_entso_e_15_min_prices_eur_kwh_json_p3_16_00_23_45` (values 64–95)
 
 ### New 15-minute JSON text sensors (TOMORROW / NEXT DAY)
-- `text_sensor.entso_e_prices_json_next_day_15min_prices_kwh_p1` (values 0–31)
-- `text_sensor.entso_e_prices_json_next_day_15min_prices_kwh_p2` (values 32–63)
-- `text_sensor.entso_e_prices_json_next_day_15min_prices_kwh_p3` (values 64–95)
+- `sensor.entso_e_prices_entso_e_next_day_15_min_prices_eur_kwh_json_p1_00_00_07_45` (values 0–31)
+- `sensor.entso_e_prices_entso_e_next_day_15_min_prices_eur_kwh_json_p2_08_00_15_45` (values 32–63)
+- `sensor.entso_e_prices_entso_e_next_day_15_min_prices_eur_kwh_json_p3_16_00_23_45` (values 64–95)
 
 > Note: v4.2.0 already exposed the 24-hour hourly JSON (which is short enough).  
 > v4.3.0 adds *15-minute* JSON and splits it to avoid HA state length limits.
-
----
-
-## Home Assistant: combine P1 + P2 + P3 into one “full JSON” sensor
-
-If you still want a single entity in HA that contains the complete 96-point JSON string, create a Template sensor in HA that concatenates the three parts.
-
-### Option A: Template integration (recommended, modern HA)
-Add this to your HA config (or via UI helpers if you manage templates there):
-
-```yaml
-template:
-  - sensor:
-      - name: "ENTSO-E 15-min Prices JSON (Today, combined)"
-        unique_id: entsoe_15min_prices_json_today_combined
-        state: >-
-          {% set p1 = states('text_sensor.entso_e_prices_json_15min_prices_kwh_p1') %}
-          {% set p2 = states('text_sensor.entso_e_prices_json_15min_prices_kwh_p2') %}
-          {% set p3 = states('text_sensor.entso_e_prices_json_15min_prices_kwh_p3') %}
-          {% if p1 in ['unknown','unavailable',''] or p2 in ['unknown','unavailable',''] or p3 in ['unknown','unavailable',''] %}
-            unknown
-          {% else %}
-            {{ p1 ~ p2 ~ p3 }}
-          {% endif %}
-        icon: mdi:code-json
-```
-
-And for tomorrow:
-
-```yaml
-template:
-  - sensor:
-      - name: "ENTSO-E 15-min Prices JSON (Tomorrow, combined)"
-        unique_id: entsoe_15min_prices_json_tomorrow_combined
-        state: >-
-          {% set p1 = states('text_sensor.entso_e_prices_json_next_day_15min_prices_kwh_p1') %}
-          {% set p2 = states('text_sensor.entso_e_prices_json_next_day_15min_prices_kwh_p2') %}
-          {% set p3 = states('text_sensor.entso_e_prices_json_next_day_15min_prices_kwh_p3') %}
-          {% if p1 in ['unknown','unavailable',''] or p2 in ['unknown','unavailable',''] or p3 in ['unknown','unavailable',''] %}
-            unknown
-          {% else %}
-            {{ p1 ~ p2 ~ p3 }}
-          {% endif %}
-        icon: mdi:code-json
-```
-
-### Important note (HA state length)
-This combined sensor may still show `unknown` in HA if HA enforces a state-length limit for *that* entity type too.  
-If that happens, keep using the P1/P2/P3 sensors (recommended) or store/parse the values differently (attributes, files, MQTT, etc.).
 
 ---
 
