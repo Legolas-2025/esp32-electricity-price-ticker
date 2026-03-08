@@ -1,6 +1,6 @@
 # ESP32 Electricity Price Ticker - Quick Start Guide
 
-Get your ESP32 electricity price ticker running in under 30 minutes with the improved v4.2.0 version!
+Get your ESP32 electricity price ticker running in under 30 minutes with the improved v4.3.0 version!
 
 ## What You Need
 
@@ -10,11 +10,91 @@ Get your ESP32 electricity price ticker running in under 30 minutes with the imp
 - **Network**: WiFi connection
 - **Files**: `entso-e-prices.yaml`, two C++ helper files, and **TWO Home Assistant automations** (REQUIRED)
 
+
+## ⚠️ Critical Build Note (ESPHome 2026.x / ESP-IDF platforms): v4.2.0 may fail to compile
+
+If you see a compile error like:
+
+- `fatal error: esp_http_client/esp_http_client.h: No such file or directory`
+
+You are likely building with a newer ESPHome/ESP-IDF platform configuration where ESP-IDF built-in component headers are not available unless explicitly enabled.
+
+### Fix (v4.3.0 and later)
+Use the v4.3.0 YAML + helper header.
+
+#### 1) Main YAML: include built-in IDF components
+In your ESPHome YAML:
+
+```yaml
+esp32:
+  board: esp32dev
+  framework:
+    type: esp-idf
+    advanced:
+      include_builtin_idf_components:
+        - esp_http_client
+        - esp-tls
+        - mbedtls
+        - esp_crt_bundle
+```
+
+#### 2) Helper file: correct ESP-IDF include path
+In `entsoe_http_idf.h`, ensure ESP-IDF headers are included via their component path:
+
+```cpp
+#include "esp_http_client/esp_http_client.h"
+#include "esp_crt_bundle.h"
+#include "esp_log.h"
+```
+
+---
+
+## v4.3.0: 15-minute JSON sensors (split into 3 parts)
+
+### Why split?
+A complete 96-point JSON string is often ~680 characters. Home Assistant frequently rejects long states and keeps the entity as `unknown`.
+
+### New sensors
+Today:
+- `text_sensor.entso_e_prices_json_15min_prices_kwh_p1`
+- `text_sensor.entso_e_prices_json_15min_prices_kwh_p2`
+- `text_sensor.entso_e_prices_json_15min_prices_kwh_p3`
+
+Tomorrow:
+- `text_sensor.entso_e_prices_json_next_day_15min_prices_kwh_p1`
+- `text_sensor.entso_e_prices_json_next_day_15min_prices_kwh_p2`
+- `text_sensor.entso_e_prices_json_next_day_15min_prices_kwh_p3`
+
+---
+
+## Home Assistant: combine P1/P2/P3 into one template sensor (optional)
+
+Add to Home Assistant:
+
+```yaml
+template:
+  - sensor:
+      - name: "ENTSO-E 15-min Prices JSON (Today, combined)"
+        unique_id: entsoe_15min_prices_json_today_combined
+        state: >-
+          {% set p1 = states('text_sensor.entso_e_prices_json_15min_prices_kwh_p1') %}
+          {% set p2 = states('text_sensor.entso_e_prices_json_15min_prices_kwh_p2') %}
+          {% set p3 = states('text_sensor.entso_e_prices_json_15min_prices_kwh_p3') %}
+          {% if p1 in ['unknown','unavailable',''] or p2 in ['unknown','unavailable',''] or p3 in ['unknown','unavailable',''] %}
+            unknown
+          {% else %}
+            {{ p1 ~ p2 ~ p3 }}
+          {% endif %}
+```
+
+> Warning: the combined state may still be too long for HA. The recommended approach is to consume P1/P2/P3 directly.
+
+
 ## ⚠️ CRITICAL: External Automations Required
 
-> **v4.2.0 uses EXTERNAL Home Assistant automations instead of internal scheduling.**
+> **v4.2.0+ uses EXTERNAL Home Assistant automations instead of internal scheduling.**
 >
-> **Without importing both automation files from `v4.2.0/crucial_ha_automations/`, your prices will NEVER update.**
+> **Without importing both automation files from `v4.3.0/crucial_ha_automations/`, your prices will NEVER update.**
 >
 > This provides more flexibility—you can modify timing, retry logic, and notifications without recompiling firmware.
 
@@ -71,26 +151,26 @@ Install "ESPHome" add-on from Home Assistant supervisor
 
 ### Step 3: Prepare Project Files (5 minutes)
 
-1. **Download** `entso-e-prices.yaml` from the project repository (v4.2.0 folder)
-2. **Download** both helper files from the v4.2.0 folder:
+1. **Download** `entso-e-prices_v4.3.0.yaml` from the project repository (v4.3.0 folder)
+2. **Download** both helper files from the v4.3.0 folder:
    - `entsoe_storage_v2.h` - NVS storage for persistent data
    - `entsoe_http_idf.h` - Optimized HTTP client for ESP-IDF
-3. **Download** `secrets_template.yaml` from v4.2.0 folder and copy to `secrets.yaml`
-4. **Download** both automation files from `v4.2.0/crucial_ha_automations/` folder:
+3. **Download** `secrets_template.yaml` from v4.3.0 folder and copy to `secrets.yaml`
+4. **Download** both automation files from `v4.3.0/crucial_ha_automations/` folder:
    - `entsoe_midnight_automation.yaml`
    - `entsoe_next_day_automation.yaml`
 
 **Important: Where to Place Helper Files**
 
-Place both `.h` helper files **directly alongside** `entso-e-prices.yaml`. ESPHome automatically includes all `.h` and `.cpp` files from the configuration directory.
+Place both `.h` helper files **directly alongside** `entso-e-prices_v4.3.0.yaml`. ESPHome automatically includes all `.h` and `.cpp` files from the configuration directory.
 
 **Directory Structure:**
 ```
 your-esphome-project/
-├── entso-e-prices.yaml              # Main configuration (from v4.2.0/)
-├── entsoe_storage_v2.h              # NVS storage helper (from v4.2.0/)
-├── entsoe_http_idf.h                # HTTP client helper (from v4.2.0/)
-└── secrets.yaml                     # Your credentials (from v4.2.0/secrets_template.yaml)
+├── entso-e-prices_v4.3.0.yaml       # Main configuration (from v4.3.0/)
+├── entsoe_storage_v2.h              # NVS storage helper (from v4.3.0/)
+├── entsoe_http_idf.h                # HTTP client helper (from v4.3.0/)
+└── secrets.yaml                     # Your credentials (from v4.3.0/secrets_template.yaml)
 ```
 
 **Do NOT put helper files in a `src/` subfolder** - place them directly alongside the main YAML file.
@@ -98,7 +178,7 @@ your-esphome-project/
 ### Step 4: Configure Your Device (5 minutes)
 
 1. **Create** new project in ESPHome dashboard
-2. **Import** or **copy** `entso-e-prices.yaml` content
+2. **Import** or **copy** `entso-e-prices_v4.3.0.yaml` content
 3. **Create** `secrets.yaml` file with your data:
 
 ```yaml
@@ -144,7 +224,7 @@ When you first compile the project in ESPHome dashboard:
    - Stable operation without random reboots
    - Optimized HTTP client performance
 
-**Why ESP-IDF?** The v4.2.0 version uses ESP-IDF framework instead of Arduino to fix the random reboot issues that occurred in v3.5.0. ESP-IDF provides more stable operation and better memory management.
+**Why ESP-IDF?** The v4.2.0+ version uses ESP-IDF framework instead of Arduino to fix the random reboot issues that occurred in v3.5.0. ESP-IDF provides more stable operation and better memory management.
 
 ### Step 7: Flash ESP32 (5 minutes)
 
@@ -224,11 +304,11 @@ automation:
         message: "Current price: {{ states('sensor.current_electricity_price') }} €/kWh"
 ```
 
-## What is New in v4.2.0
+## What is New in v4.2.0+
 
 ### Fixed Reboot Issues
 
-**Important**: The v3.5.0 version experienced random reboots that were initially thought to be fixed. After further investigation, we discovered that only v4.2.0 with the ESP-IDF framework truly resolves these stability issues. If you experienced random reboots with v3.5.0, upgrading to v4.2.0 with ESP-IDF will resolve this problem.
+**Important**: The v3.5.0 version experienced random reboots that were initially thought to be fixed. After further investigation, we discovered that only v4.2.0 with the ESP-IDF framework truly resolves these stability issues. If you experienced random reboots with v3.5.0, upgrading to v4.2.0+ with ESP-IDF will resolve this problem.
 
 ### NVS Persistent Storage
 
@@ -250,7 +330,7 @@ Migrated from Arduino to ESP-IDF for:
 
 ### External Automations (REQUIRED)
 
-v4.2.0 requires two external Home Assistant automations for updates:
+v4.2.0+ requires two external Home Assistant automations for updates:
 
 1. **Midnight Automation** (`entsoe_midnight_automation.yaml`):
    - Runs at 00:00:00
@@ -267,7 +347,7 @@ v4.2.0 requires two external Home Assistant automations for updates:
 
 ### Two Required Helper Files
 
-The v4.2.0 requires two C++ helper files that must be placed **directly alongside** `entso-e-prices.yaml`:
+The v4.2.0+ requires two C++ helper files that must be placed **directly alongside** `entso-e-prices.yaml`:
 
 1. **entsoe_storage_v2.h** - Handles NVS storage operations
 2. **entsoe_http_idf.h** - Optimized HTTP communication
@@ -305,7 +385,7 @@ Both files are automatically included by the main YAML configuration.
 - Ensure ESP-IDF framework is selected (not Arduino)
 
 **Random reboots?**
-- **This should not happen in v4.2.0** - If it does, ensure you selected ESP-IDF framework
+- **This should not happen in v4.2.0+** - If it does, ensure you selected ESP-IDF framework
 - Check power supply quality
 - Review logs for any error messages before reboot
 - If reboots persist, perform a full clean build
