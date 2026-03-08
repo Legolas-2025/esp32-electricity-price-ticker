@@ -13,7 +13,7 @@ Inspired by the [hass-entso-e project](https://github.com/JaccoR/hass-entso-e). 
 > **Current Stable Version: v4.3.0**
 > 
 > v4.2.0 inroduced a **major architectural release** that moves all scheduling logic to external Home Assistant automations for maximum flexibility and control.
-> **CRITICAL REQUIREMENT**: v4.2.0+ requires two external Home Assistant automations from the `v4.2.0/crucial_ha_automations/` folder. Without these automations, your prices will never update.
+> **CRITICAL REQUIREMENT**: v4.3.0 requires two external Home Assistant automations from the `v4.3.0/crucial_ha_automations/` folder. Without these automations, your prices will never update.
 > Key improvements include: ESP-IDF framework for stability, NVS persistent storage for data retention across power cycles, optimized HTTP client, and the two helper files `entsoe_storage_v2.h` and `entsoe_http_idf.h`.
 
 ## ⚠️ Important: v4.2.0 may no longer compile (ESPHome 2026.x / newer ESP-IDF platforms)
