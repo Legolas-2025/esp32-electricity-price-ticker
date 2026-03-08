@@ -17,20 +17,17 @@ esphome:
             id(boot_time) = 0;
           }
 
-# Version: v4.3.0
-# - ESP-IDF only
+# Version: v4.3.0 (ESPHome 2026.2.4) - device-side fetch (ESP-IDF esp_http_client)
+# Notes:
+# - Uses entsoe_http_idf::fetch() (esp_http_client + esp_crt_bundle)
+# - pioarduino platform needs include_builtin_idf_components to expose IDF headers
 # - Two-slot NVS: today96 + tomorrow96 via entsoe_storage_v2.h
-# - Today and tomorrow always come from distinct NVS slots when possible
 # - Boot recovery for both today and tomorrow uses NVS first, then HTTP
-# - Midnight path can promote tomorrow96 -> today96
 #
-# v4.3.0 update:
-# - Added 2 new JSON text sensors that publish full 96-point 15-minute curves:
-#   * json_15min_prices_kwh (today, from hourly_prices[96])
-#   * json_next_day_15min_prices_kwh (tomorrow, from next_day_hourly_prices[96])
-# - These are updated whenever the existing 24-hour JSON sensors are published
-#   and are also published during boot recovery when restoring from NVS.
-# - Both new JSON sensors are cleared when price data is cleared.
+# FIX (HA "unknown" issue):
+# - Home Assistant often rejects long text sensor state strings (common 255-char state limit).
+# - The 96-point JSON strings (~680 chars) get published on-device (logs prove it), but HA keeps state "unknown".
+# - So: chunk the 96-point JSON into THREE text sensors (P1 (values 0–31), P2 (32–63), P3 (64–95)) for today and tomorrow.
 
 substitutions:
   entsoe_api_token: !secret entsoe_entsoe_api_token
@@ -40,6 +37,12 @@ esp32:
   board: esp32dev
   framework:
     type: esp-idf
+    advanced:
+      include_builtin_idf_components:
+        - esp_http_client
+        - esp-tls
+        - mbedtls
+        - esp_crt_bundle
 
 captive_portal:
 
@@ -68,7 +71,7 @@ api:
               root["retry_count"] = id(retry_count);
               root["status_message"] = id(update_status_message);
 
-    # New: promote + load today from NVS (for midnight automation)
+    # Promote tomorrow96 -> today96 and load (for midnight automation)
     - action: promote_and_load_today_from_nvs
       then:
         - lambda: |-
@@ -81,14 +84,12 @@ api:
               return;
             }
 
-            // NEW today: local calendar date when this runs (e.g. 2026-02-11 at 00:00:xx)
             uint32_t new_today_yyyymmdd = (uint32_t)(t_now.year * 10000 +
                                                      t_now.month * 100 +
                                                      t_now.day_of_month);
 
             ESP_LOGI("entsoe", "promote_and_load_today_from_nvs: new_today_yyyymmdd=%u", new_today_yyyymmdd);
 
-            // Promote tomorrow96 -> today96 for NEW today
             if (!entsoe_storage_v2::promote_tomorrow_to_today(new_today_yyyymmdd)) {
               ESP_LOGW("entsoe", "promote_and_load_today_from_nvs: promotion failed for %u", new_today_yyyymmdd);
               id(last_update_success) = false;
@@ -97,7 +98,6 @@ api:
               return;
             }
 
-            // Load today's curve from today96 after promotion
             std::vector<float> loaded(96, NAN);
             if (!entsoe_storage_v2::load_today_strict(new_today_yyyymmdd, loaded)) {
               ESP_LOGW("entsoe", "promote_and_load_today_from_nvs: load_today_strict failed after promote for %u",
@@ -116,7 +116,6 @@ api:
             id(last_update_success) = true;
             id(update_status_message) = std::string("Loaded from NVS (promote+load)");
 
-            // Determine current price status (Valid/Missing) from the promoted curve
             auto t = id(ha_time).now();
             int cur_idx = (t.hour * 4) + (t.minute / 15);
             std::string status = "Missing";
@@ -137,10 +136,8 @@ api:
             id(price_status_message).update();
             id(current_price_status).update();
 
-            // Mark last update source
             id(entsoe_last_update_source).publish_state("NVS_promote");
 
-    # Legacy: API load_today_from_nvs (now via new storage)
     - action: load_today_from_nvs
       then:
         - lambda: |-
@@ -167,11 +164,7 @@ api:
             std::string status = "Missing";
             if (cur_idx >= 0 && cur_idx < 96) {
               float val = id(hourly_prices)[cur_idx];
-              if (!std::isnan(val)) {
-                status = "Valid";
-              }
-            } else {
-              status = "Missing";
+              if (!std::isnan(val)) status = "Valid";
             }
             id(current_price_status_str) = status;
 
@@ -439,12 +432,26 @@ text_sensor:
     name: "ENTSO-E Hourly Prices EUR⁄kWh JSON"
     id: json_hourly_prices_kwh
     icon: "mdi:code-json"
+    update_interval: never
 
-  # NEW v4.3.0: 96-point 15-min JSON for today
+  # --- TODAY: 96-point 15-min JSON split into 3 parts (32 values each) ---
   - platform: template
-    name: "ENTSO-E 15-Min Prices EUR⁄kWh JSON"
-    id: json_15min_prices_kwh
+    name: "ENTSO-E 15-Min Prices EUR⁄kWh JSON (P1 00:00-07:45)"
+    id: json_15min_prices_kwh_p1
     icon: "mdi:code-json"
+    update_interval: never
+
+  - platform: template
+    name: "ENTSO-E 15-Min Prices EUR⁄kWh JSON (P2 08:00-15:45)"
+    id: json_15min_prices_kwh_p2
+    icon: "mdi:code-json"
+    update_interval: never
+
+  - platform: template
+    name: "ENTSO-E 15-Min Prices EUR⁄kWh JSON (P3 16:00-23:45)"
+    id: json_15min_prices_kwh_p3
+    icon: "mdi:code-json"
+    update_interval: never
 
   - platform: template
     name: "Time Of Highest Energy Price Today"
@@ -512,12 +519,26 @@ text_sensor:
     name: "ENTSO-E Next Day Hourly Prices EUR⁄kWh JSON"
     id: json_next_day_hourly_prices_kwh
     icon: "mdi:code-json"
+    update_interval: never
 
-  # NEW v4.3.0: 96-point 15-min JSON for tomorrow
+  # --- TOMORROW: 96-point 15-min JSON split into 3 parts (32 values each) ---
   - platform: template
-    name: "ENTSO-E Next Day 15-Min Prices EUR⁄kWh JSON"
-    id: json_next_day_15min_prices_kwh
+    name: "ENTSO-E Next Day 15-Min Prices EUR⁄kWh JSON (P1 00:00-07:45)"
+    id: json_next_day_15min_prices_kwh_p1
     icon: "mdi:code-json"
+    update_interval: never
+
+  - platform: template
+    name: "ENTSO-E Next Day 15-Min Prices EUR⁄kWh JSON (P2 08:00-15:45)"
+    id: json_next_day_15min_prices_kwh_p2
+    icon: "mdi:code-json"
+    update_interval: never
+
+  - platform: template
+    name: "ENTSO-E Next Day 15-Min Prices EUR⁄kWh JSON (P3 16:00-23:45)"
+    id: json_next_day_15min_prices_kwh_p3
+    icon: "mdi:code-json"
+    update_interval: never
 
   - platform: template
     name: "Time Of Highest Energy Price Tomorrow"
@@ -833,6 +854,9 @@ button:
 
 # 8. SCRIPTS
 script:
+  # ---------------------------------------------------------------------------
+  # TODAY worker wrapper
+  # ---------------------------------------------------------------------------
   - id: smart_price_update
     then:
       - lambda: |-
@@ -846,16 +870,13 @@ script:
           id(daily_price_update_attempts).publish_state(id(retry_count));
       - script.execute: full_update_logic_script
       - lambda: |-
-          // Status: only "Valid" if last_update_success and slot is non-NaN
           auto t = id(ha_time).now();
           int cur_idx = (t.hour * 4) + (t.minute / 15);
 
           std::string status = "Missing";
           if (id(last_update_success) && cur_idx >= 0 && cur_idx < 96) {
             float val = id(hourly_prices)[cur_idx];
-            if (!std::isnan(val)) {
-              status = "Valid";
-            }
+            if (!std::isnan(val)) status = "Valid";
           }
           id(current_price_status_str) = status;
 
@@ -869,6 +890,9 @@ script:
           id(min_hourly_price_time).update();
           id(is_updating_today) = false;
 
+  # ---------------------------------------------------------------------------
+  # TODAY: device-side HTTPS fetch via esp_http_client
+  # ---------------------------------------------------------------------------
   - id: full_update_logic_script
     then:
       - lambda: |-
@@ -877,12 +901,18 @@ script:
           const double MULT = (1.0 + PROV_FEE) * (1.0 + VAT_R);
 
           auto t_now = id(ha_time).now();
-          // Today's curve is for "today_yyyymmdd"
+          if (!t_now.is_valid()) {
+            id(last_update_success) = false;
+            id(update_status_message) = std::string("Time invalid");
+            ESP_LOGW("entsoe", "Today's update: time invalid");
+            return;
+          }
+
           uint32_t today_yyyymmdd = (uint32_t)(t_now.year * 10000 + t_now.month * 100 + t_now.day_of_month);
 
-          // Build ENTSO-E period from yesterday 23:00 to today 23:00 (as before)
           time_t y_ts = t_now.timestamp - 86400;
           struct tm *tm_y = localtime(&y_ts);
+
           char buf[16];
           sprintf(buf, "%04d%02d%02d2300", tm_y->tm_year + 1900, tm_y->tm_mon + 1, tm_y->tm_mday);
           std::string pStart = std::string(buf);
@@ -895,6 +925,7 @@ script:
                             "&periodStart=" + pStart + "&periodEnd=" + pEnd;
 
           ESP_LOGI("entsoe", "Fetching Today's Prices from ENTSO-E API (ESP-IDF HTTPS)");
+          ESP_LOGI("entsoe", "Today's API: periodStart=%s, periodEnd=%s", pStart.c_str(), pEnd.c_str());
 
           std::string xml;
           std::string status_msg;
@@ -905,12 +936,10 @@ script:
             return;
           }
 
-          // Parse XML into n_kwh[96] (unchanged parsing)
           ESP_LOGI("entsoe", "Today's Prices: Parsing XML (len=%d)", (int)xml.size());
 
           std::vector<float> n_kwh(96, NAN);
           int count = 0;
-          double raw_sum_mwh = 0.0;
           int last_pos = 0;
           float last_raw_price = NAN;
 
@@ -925,22 +954,18 @@ script:
             size_t s_pri = p_xml.find("<price.amount>");
             size_t e_pri = p_xml.find("</price.amount>");
 
-            if (s_pos != std::string::npos && s_pri != std::string::npos) {
+            if (s_pos != std::string::npos && s_pri != std::string::npos &&
+                e_pos != std::string::npos && e_pri != std::string::npos) {
               int current_pos = atoi(p_xml.substr(s_pos + 10, e_pos - (s_pos + 10)).c_str());
               float current_raw_price = atof(p_xml.substr(s_pri + 14, e_pri - (s_pri + 14)).c_str());
 
               if (current_pos > (last_pos + 1) && !std::isnan(last_raw_price)) {
                 for (int f = last_pos + 1; f < current_pos; f++) {
-                  if (f <= 96) {
-                    n_kwh[f - 1] = (float)((double)last_raw_price * MULT / 1000.0);
-                    raw_sum_mwh += (double)last_raw_price;
-                    count++;
-                  }
+                  if (f <= 96) { n_kwh[f - 1] = (float)((double)last_raw_price * MULT / 1000.0); count++; }
                 }
               }
               if (current_pos <= 96) {
                 n_kwh[current_pos - 1] = (float)((double)current_raw_price * MULT / 1000.0);
-                raw_sum_mwh += (double)current_raw_price;
                 count++;
                 last_pos = current_pos;
                 last_raw_price = current_raw_price;
@@ -951,27 +976,25 @@ script:
           if (last_pos > 0 && last_pos < 96 && !std::isnan(last_raw_price)) {
             for (int f = last_pos + 1; f <= 96; f++) {
               n_kwh[f - 1] = (float)((double)last_raw_price * MULT / 1000.0);
-              raw_sum_mwh += (double)last_raw_price;
               count++;
             }
           }
 
-          // After parsing & forward-fill:
           if (count > 0) {
             id(hourly_prices) = n_kwh;
             id(recompute_today_from_current_hourly_vector_script).execute();
+
             char m[40]; sprintf(m, "Success (%d/96)", count);
             id(update_status_message) = std::string(m);
-            id(last_successful_update) = id(ha_time).now().timestamp;
+            id(last_successful_update) = t_now.timestamp;
             id(last_update_success) = true;
+
             ESP_LOGI("entsoe", "Today's Prices Updated Successfully: %d points", count);
 
-            // NEW: store today curve in today96
             if (!entsoe_storage_v2::store_today(today_yyyymmdd, n_kwh)) {
               ESP_LOGW("entsoe", "Failed to store today's prices in today96 NVS");
               id(entsoe_today_nvs_status).publish_state("Today NVS: Store FAILED");
             } else {
-              ESP_LOGI("entsoe", "Stored today's prices in NVS today96 for date %u", today_yyyymmdd);
               char buf_nvs[60];
               sprintf(buf_nvs, "Today NVS: Stored for %04u-%02u-%02u",
                       (unsigned)(today_yyyymmdd / 10000),
@@ -980,7 +1003,6 @@ script:
               id(entsoe_today_nvs_status).publish_state(buf_nvs);
             }
 
-            // Mark last update source
             id(entsoe_last_update_source).publish_state("HTTP_today");
 
           } else {
@@ -1012,7 +1034,7 @@ script:
 
           std::vector<float> h_sums(24, 0.0);
           std::vector<int> h_counts(24, 0);
-          float h_min_v = 9999, h_max_v = -9999;
+          float h_min_v = 9999.0, h_max_v = -9999.0;
           int h_min_i = 0, h_max_i = 0;
 
           for (int i = 0; i < 96; i++) {
@@ -1045,19 +1067,34 @@ script:
           json += "]";
           id(json_hourly_prices_kwh).publish_state(json.c_str());
 
-          // NEW v4.3.0: 96 quarter-hour values JSON
-          std::string json96 = "[";
-          for (int i = 0; i < 96; i++) {
-            if (!std::isnan(n_kwh[i])) {
-              char p_buf[12]; sprintf(p_buf, "%.4f", n_kwh[i]);
-              json96 += p_buf;
-            } else {
-              json96 += "null";
+          // 96 quarter-hour values JSON (today) -> publish 3 valid JSON arrays of 32 values each
+          auto build_json32 = [&](int start_idx) -> std::string {
+            std::string j = "[";
+            j.reserve(32 * 8 + 2);
+            for (int i = start_idx; i < start_idx + 32; i++) {
+              if (!std::isnan(n_kwh[i])) {
+                char p_buf[16];
+                snprintf(p_buf, sizeof(p_buf), "%.4f", n_kwh[i]);
+                j += p_buf;
+              } else {
+                j += "null";
+              }
+              if (i < start_idx + 31) j += ",";
             }
-            if (i < 95) json96 += ",";
-          }
-          json96 += "]";
-          id(json_15min_prices_kwh).publish_state(json96.c_str());
+            j += "]";
+            return j;
+          };
+
+          std::string j1 = build_json32(0);
+          std::string j2 = build_json32(32);
+          std::string j3 = build_json32(64);
+
+          ESP_LOGI("entsoe", "Publishing today json32 lengths: p1=%u p2=%u p3=%u",
+                   (unsigned) j1.size(), (unsigned) j2.size(), (unsigned) j3.size());
+
+          id(json_15min_prices_kwh_p1).publish_state(j1);
+          id(json_15min_prices_kwh_p2).publish_state(j2);
+          id(json_15min_prices_kwh_p3).publish_state(j3);
 
           if (min_v < 9999.0 && max_v > -9999.0) {
             id(min_price).publish_state(min_v);
@@ -1083,6 +1120,9 @@ script:
           id(last_successful_update) = id(ha_time).now().timestamp;
           id(last_update_success) = true;
 
+  # ---------------------------------------------------------------------------
+  # TOMORROW wrapper
+  # ---------------------------------------------------------------------------
   - id: smart_next_day_price_update
     then:
       - lambda: |-
@@ -1102,9 +1142,7 @@ script:
           std::string status = "Missing";
           if (id(next_day_last_update_success) && cur_idx >= 0 && cur_idx < 96) {
             float val = id(next_day_hourly_prices)[cur_idx];
-            if (!std::isnan(val)) {
-              status = "Valid";
-            }
+            if (!std::isnan(val)) status = "Valid";
           }
           id(next_day_current_price_status_str) = status;
 
@@ -1118,6 +1156,9 @@ script:
           id(next_day_min_hourly_price_time).update();
           id(is_updating_tomorrow) = false;
 
+  # ---------------------------------------------------------------------------
+  # TOMORROW: device-side HTTPS fetch via esp_http_client
+  # ---------------------------------------------------------------------------
   - id: next_day_full_update_logic_script
     then:
       - lambda: |-
@@ -1126,6 +1167,13 @@ script:
           const double MULT = (1.0 + PROV_FEE) * (1.0 + VAT_R);
 
           auto t_now = id(ha_time).now();
+          if (!t_now.is_valid()) {
+            id(next_day_last_update_success) = false;
+            id(next_day_update_status_message) = std::string("Time invalid");
+            ESP_LOGW("entsoe", "Tomorrow update: time invalid");
+            return;
+          }
+
           time_t tmr_ts = t_now.timestamp + 86400;
           struct tm *tm_tmr = localtime(&tmr_ts);
           uint32_t tomorrow_yyyymmdd = (uint32_t)((tm_tmr->tm_year + 1900) * 10000 +
@@ -1155,12 +1203,10 @@ script:
             return;
           }
 
-          // Parse XML into n_kwh[96], recompute stats
           ESP_LOGI("entsoe", "Tomorrow's Prices: Parsing XML (len=%d)", (int)xml.size());
 
           std::vector<float> n_kwh(96, NAN);
           int count = 0;
-          double raw_sum_mwh = 0.0;
           int last_pos = 0;
           float last_raw_price = NAN;
 
@@ -1175,22 +1221,18 @@ script:
             size_t s_pri = p_xml.find("<price.amount>");
             size_t e_pri = p_xml.find("</price.amount>");
 
-            if (s_pos != std::string::npos && s_pri != std::string::npos) {
+            if (s_pos != std::string::npos && s_pri != std::string::npos &&
+                e_pos != std::string::npos && e_pri != std::string::npos) {
               int current_pos = atoi(p_xml.substr(s_pos + 10, e_pos - (s_pos + 10)).c_str());
               float current_raw_price = atof(p_xml.substr(s_pri + 14, e_pri - (s_pri + 14)).c_str());
 
               if (current_pos > (last_pos + 1) && !std::isnan(last_raw_price)) {
                 for (int f = last_pos + 1; f < current_pos; f++) {
-                  if (f <= 96) {
-                    n_kwh[f - 1] = (float)((double)last_raw_price * MULT / 1000.0);
-                    raw_sum_mwh += (double)last_raw_price;
-                    count++;
-                  }
+                  if (f <= 96) { n_kwh[f - 1] = (float)((double)last_raw_price * MULT / 1000.0); count++; }
                 }
               }
               if (current_pos <= 96) {
                 n_kwh[current_pos - 1] = (float)((double)current_raw_price * MULT / 1000.0);
-                raw_sum_mwh += (double)current_raw_price;
                 count++;
                 last_pos = current_pos;
                 last_raw_price = current_raw_price;
@@ -1201,113 +1243,128 @@ script:
           if (last_pos > 0 && last_pos < 96 && !std::isnan(last_raw_price)) {
             for (int f = last_pos + 1; f <= 96; f++) {
               n_kwh[f - 1] = (float)((double)last_raw_price * MULT / 1000.0);
-              raw_sum_mwh += (double)last_raw_price;
               count++;
             }
           }
 
-          if (count > 0) {
-            id(next_day_hourly_prices) = n_kwh;
-
-            // Recompute & publish tomorrow stats and JSON (24h + 96x15m)
-            float min_v = 9999.0, max_v = -9999.0;
-            int min_idx = 0, max_idx = 0;
-            for (int i = 0; i < 96; i++) {
-              if (!std::isnan(n_kwh[i])) {
-                if (n_kwh[i] < min_v) { min_v = n_kwh[i]; min_idx = i; }
-                if (n_kwh[i] > max_v) { max_v = n_kwh[i]; max_idx = i; }
-              }
-            }
-
-            std::vector<float> h_sums(24, 0.0);
-            std::vector<int> h_counts(24, 0);
-            float h_min_v = 9999, h_max_v = -9999;
-            int h_min_i = 0, h_max_i = 0;
-
-            for (int i = 0; i < 96; i++) {
-              if (!std::isnan(n_kwh[i])) {
-                h_sums[i / 4] += n_kwh[i];
-                h_counts[i / 4]++;
-              }
-            }
-
-            std::string json = "[";
-            double raw_sum_kwh = 0.0;
-            int count_kwh = 0;
-
-            for (int i = 0; i < 24; i++) {
-              if (h_counts[i] > 0) {
-                float h_avg = h_sums[i] / h_counts[i];
-                id(next_day_hourly_avg_prices_kwh)[i] = h_avg;
-                if (h_avg < h_min_v) { h_min_v = h_avg; h_min_i = i; }
-                if (h_avg > h_max_v) { h_max_v = h_avg; h_max_i = i; }
-                char p_buf[10]; sprintf(p_buf, "%.4f", h_avg); json += p_buf;
-                raw_sum_kwh += (double)h_avg;
-                count_kwh++;
-              } else {
-                id(next_day_hourly_avg_prices_kwh)[i] = NAN;
-                json += "null";
-              }
-              if (i < 23) json += ",";
-            }
-            json += "]";
-            id(json_next_day_hourly_prices_kwh).publish_state(json.c_str());
-
-            // NEW v4.3.0: 96-point 15-min JSON for tomorrow
-            std::string json96 = "[";
-            for (int i = 0; i < 96; i++) {
-              if (!std::isnan(n_kwh[i])) {
-                char p_buf[12]; sprintf(p_buf, "%.4f", n_kwh[i]);
-                json96 += p_buf;
-              } else {
-                json96 += "null";
-              }
-              if (i < 95) json96 += ",";
-            }
-            json96 += "]";
-            id(json_next_day_15min_prices_kwh).publish_state(json96.c_str());
-
-            id(next_day_min_price).publish_state(min_v);
-            id(next_day_max_price).publish_state(max_v);
-            char t_buf2[6];
-            sprintf(t_buf2, "%02d:%02d", (min_idx / 4), (min_idx % 4) * 15); id(next_day_min_price_time_str) = t_buf2;
-            sprintf(t_buf2, "%02d:%02d", (max_idx / 4), (max_idx % 4) * 15); id(next_day_max_price_time_str) = t_buf2;
-
-            id(next_day_min_hourly_price).publish_state(h_min_v);
-            id(next_day_max_hourly_price).publish_state(h_max_v);
-            char h_buf2[6];
-            sprintf(h_buf2, "%02d:00", h_min_i); id(next_day_min_hourly_price_time_str) = h_buf2;
-            sprintf(h_buf2, "%02d:00", h_max_i); id(next_day_max_hourly_price_time_str) = h_buf2;
-
-            if (count_kwh > 0) {
-              double f_avg = raw_sum_kwh / (double)count_kwh;
-              id(next_day_avg_price).publish_state((float)f_avg);
-            }
-
-            id(next_day_last_successful_update) = id(ha_time).now().timestamp;
-            id(next_day_last_update_success) = true;
-            char m2[40]; sprintf(m2, "Success (%d/96)", count);
-            id(next_day_update_status_message) = std::string(m2);
-            ESP_LOGI("entsoe", "Tomorrow's Prices Updated Successfully: %d points", count);
-
-            // store tomorrow curve in tomorrow96
-            if (!entsoe_storage_v2::store_tomorrow(tomorrow_yyyymmdd, n_kwh)) {
-              ESP_LOGW("entsoe", "Failed to store tomorrow's prices in tomorrow96 NVS");
-              id(entsoe_tomorrow_nvs_status).publish_state("Tomorrow NVS: Store FAILED");
-            } else {
-              ESP_LOGI("entsoe", "Stored tomorrow's prices in NVS tomorrow96 for date %u", tomorrow_yyyymmdd);
-              char buf_nvs[60];
-              sprintf(buf_nvs, "Tomorrow NVS: Stored for %04u-%02u-%02u",
-                      (unsigned)(tomorrow_yyyymmdd / 10000),
-                      (unsigned)((tomorrow_yyyymmdd / 100) % 100),
-                      (unsigned)(tomorrow_yyyymmdd % 100));
-              id(entsoe_tomorrow_nvs_status).publish_state(buf_nvs);
-            }
-
-          } else {
+          if (count <= 0) {
             id(next_day_last_update_success) = false;
             id(next_day_update_status_message) = std::string("No data points parsed");
             ESP_LOGW("entsoe", "Tomorrow's Prices: No data points parsed");
+            return;
+          }
+
+          id(next_day_hourly_prices) = n_kwh;
+
+          float min_v = 9999.0, max_v = -9999.0;
+          int min_idx = 0, max_idx = 0;
+          for (int i = 0; i < 96; i++) {
+            if (!std::isnan(n_kwh[i])) {
+              if (n_kwh[i] < min_v) { min_v = n_kwh[i]; min_idx = i; }
+              if (n_kwh[i] > max_v) { max_v = n_kwh[i]; max_idx = i; }
+            }
+          }
+
+          std::vector<float> h_sums(24, 0.0);
+          std::vector<int> h_counts(24, 0);
+          float h_min_v = 9999, h_max_v = -9999;
+          int h_min_i = 0, h_max_i = 0;
+
+          for (int i = 0; i < 96; i++) {
+            if (!std::isnan(n_kwh[i])) {
+              h_sums[i / 4] += n_kwh[i];
+              h_counts[i / 4]++;
+            }
+          }
+
+          std::string json = "[";
+          double raw_sum_kwh = 0.0;
+          int count_kwh = 0;
+
+          for (int i = 0; i < 24; i++) {
+            if (h_counts[i] > 0) {
+              float h_avg = h_sums[i] / h_counts[i];
+              id(next_day_hourly_avg_prices_kwh)[i] = h_avg;
+              if (h_avg < h_min_v) { h_min_v = h_avg; h_min_i = i; }
+              if (h_avg > h_max_v) { h_max_v = h_avg; h_max_i = i; }
+              char p_buf[10]; sprintf(p_buf, "%.4f", h_avg); json += p_buf;
+              raw_sum_kwh += (double)h_avg;
+              count_kwh++;
+            } else {
+              id(next_day_hourly_avg_prices_kwh)[i] = NAN;
+              json += "null";
+            }
+            if (i < 23) json += ",";
+          }
+          json += "]";
+          id(json_next_day_hourly_prices_kwh).publish_state(json.c_str());
+
+          // 96-point 15-min JSON for tomorrow -> publish 3 valid JSON arrays of 32 values each
+          auto build_json32 = [&](int start_idx) -> std::string {
+            std::string j = "[";
+            j.reserve(32 * 8 + 2);
+            for (int i = start_idx; i < start_idx + 32; i++) {
+              if (!std::isnan(n_kwh[i])) {
+                char p_buf[16];
+                snprintf(p_buf, sizeof(p_buf), "%.4f", n_kwh[i]);
+                j += p_buf;
+              } else {
+                j += "null";
+              }
+              if (i < start_idx + 31) j += ",";
+            }
+            j += "]";
+            return j;
+          };
+
+          std::string j1 = build_json32(0);
+          std::string j2 = build_json32(32);
+          std::string j3 = build_json32(64);
+
+          ESP_LOGI("entsoe", "Publishing tomorrow json32 lengths: p1=%u p2=%u p3=%u",
+                   (unsigned) j1.size(), (unsigned) j2.size(), (unsigned) j3.size());
+
+          id(json_next_day_15min_prices_kwh_p1).publish_state(j1);
+          id(json_next_day_15min_prices_kwh_p2).publish_state(j2);
+          id(json_next_day_15min_prices_kwh_p3).publish_state(j3);
+
+          id(next_day_min_price).publish_state(min_v);
+          id(next_day_max_price).publish_state(max_v);
+
+          char t_buf2[6];
+          sprintf(t_buf2, "%02d:%02d", (min_idx / 4), (min_idx % 4) * 15); id(next_day_min_price_time_str) = t_buf2;
+          sprintf(t_buf2, "%02d:%02d", (max_idx / 4), (max_idx % 4) * 15); id(next_day_max_price_time_str) = t_buf2;
+
+          id(next_day_min_hourly_price).publish_state(h_min_v);
+          id(next_day_max_hourly_price).publish_state(h_max_v);
+
+          char h_buf2[6];
+          sprintf(h_buf2, "%02d:00", h_min_i); id(next_day_min_hourly_price_time_str) = h_buf2;
+          sprintf(h_buf2, "%02d:00", h_max_i); id(next_day_max_hourly_price_time_str) = h_buf2;
+
+          if (count_kwh > 0) {
+            double f_avg = raw_sum_kwh / (double)count_kwh;
+            id(next_day_avg_price).publish_state((float)f_avg);
+          }
+
+          id(next_day_last_successful_update) = t_now.timestamp;
+          id(next_day_last_update_success) = true;
+
+          char m2[40]; sprintf(m2, "Success (%d/96)", count);
+          id(next_day_update_status_message) = std::string(m2);
+
+          ESP_LOGI("entsoe", "Tomorrow's Prices Updated Successfully: %d points", count);
+
+          if (!entsoe_storage_v2::store_tomorrow(tomorrow_yyyymmdd, n_kwh)) {
+            ESP_LOGW("entsoe", "Failed to store tomorrow's prices in tomorrow96 NVS");
+            id(entsoe_tomorrow_nvs_status).publish_state("Tomorrow NVS: Store FAILED");
+          } else {
+            char buf_nvs[60];
+            sprintf(buf_nvs, "Tomorrow NVS: Stored for %04u-%02u-%02u",
+                    (unsigned)(tomorrow_yyyymmdd / 10000),
+                    (unsigned)((tomorrow_yyyymmdd / 100) % 100),
+                    (unsigned)(tomorrow_yyyymmdd % 100));
+            id(entsoe_tomorrow_nvs_status).publish_state(buf_nvs);
           }
 
   - id: boot_recovery_today_script
@@ -1362,7 +1419,6 @@ script:
             id(max_hourly_price_time).update();
             id(min_hourly_price_time).update();
 
-            // Mark last update source
             id(entsoe_last_update_source).publish_state("NVS_boot");
 
           } else {
@@ -1408,7 +1464,7 @@ script:
 
           uint32_t tomorrow_yyyymmdd = (uint32_t)((tm_tmr->tm_year + 1900) * 10000 +
                                                   (tm_tmr->tm_mon + 1) * 100 +
-                                                  (tm_tmr->tm_mday));
+                                                  tm_tmr->tm_mday);
 
           std::vector<float> loaded(96, NAN);
           if (entsoe_storage_v2::load_tomorrow_strict(tomorrow_yyyymmdd, loaded)) {
@@ -1435,7 +1491,7 @@ script:
 
             std::vector<float> h_sums(24, 0.0);
             std::vector<int> h_counts(24, 0);
-            float h_min_v = 9999, h_max_v = -9999;
+            float h_min_v = 9999.0, h_max_v = -9999.0;
             int h_min_i = 0, h_max_i = 0;
 
             for (int i = 0; i < 96; i++) {
@@ -1467,19 +1523,34 @@ script:
             json += "]";
             id(json_next_day_hourly_prices_kwh).publish_state(json.c_str());
 
-            // NEW v4.3.0: 96-point 15-min JSON for tomorrow
-            std::string json96 = "[";
-            for (int i = 0; i < 96; i++) {
-              if (!std::isnan(n_kwh[i])) {
-                char p_buf[12]; sprintf(p_buf, "%.4f", n_kwh[i]);
-                json96 += p_buf;
-              } else {
-                json96 += "null";
+            // 96-point 15-min JSON for tomorrow (boot) -> publish 3 valid JSON arrays of 32 values each
+            auto build_json32 = [&](int start_idx) -> std::string {
+              std::string j = "[";
+              j.reserve(32 * 8 + 2);
+              for (int i = start_idx; i < start_idx + 32; i++) {
+                if (!std::isnan(n_kwh[i])) {
+                  char p_buf[16];
+                  snprintf(p_buf, sizeof(p_buf), "%.4f", n_kwh[i]);
+                  j += p_buf;
+                } else {
+                  j += "null";
+                }
+                if (i < start_idx + 31) j += ",";
               }
-              if (i < 95) json96 += ",";
-            }
-            json96 += "]";
-            id(json_next_day_15min_prices_kwh).publish_state(json96.c_str());
+              j += "]";
+              return j;
+            };
+
+            std::string j1 = build_json32(0);
+            std::string j2 = build_json32(32);
+            std::string j3 = build_json32(64);
+
+            ESP_LOGI("entsoe", "Boot publish tomorrow json32 lengths: p1=%u p2=%u p3=%u",
+                     (unsigned) j1.size(), (unsigned) j2.size(), (unsigned) j3.size());
+
+            id(json_next_day_15min_prices_kwh_p1).publish_state(j1);
+            id(json_next_day_15min_prices_kwh_p2).publish_state(j2);
+            id(json_next_day_15min_prices_kwh_p3).publish_state(j3);
 
             id(next_day_min_price).publish_state(min_v);
             id(next_day_max_price).publish_state(max_v);
@@ -1549,7 +1620,9 @@ script:
           id(last_update_success) = false;
           id(update_status_message) = std::string("Cleared - awaiting NVS or HTTP");
           id(json_hourly_prices_kwh).publish_state("[]");
-          id(json_15min_prices_kwh).publish_state("[]");
+          id(json_15min_prices_kwh_p1).publish_state("");
+          id(json_15min_prices_kwh_p2).publish_state("");
+          id(json_15min_prices_kwh_p3).publish_state("");
           for (int i = 0; i < 24; i++) {
             id(hourly_avg_prices_kwh)[i] = NAN;
           }
@@ -1578,7 +1651,9 @@ script:
           id(next_day_max_hourly_price).publish_state(NAN);
           id(next_day_current_max_hourly_price_percentage).publish_state(NAN);
           id(json_next_day_hourly_prices_kwh).publish_state("[]");
-          id(json_next_day_15min_prices_kwh).publish_state("[]");
+          id(json_next_day_15min_prices_kwh_p1).publish_state("");
+          id(json_next_day_15min_prices_kwh_p2).publish_state("");
+          id(json_next_day_15min_prices_kwh_p3).publish_state("");
           for (int i = 0; i < 24; i++) {
             id(next_day_hourly_avg_prices_kwh)[i] = NAN;
           }
