@@ -6,9 +6,9 @@ This document provides an overview of the project files and their purposes for t
 
 Version v4.2.0 introduces a major architectural change: all scheduling logic has been moved to external Home Assistant automations. This provides maximum flexibility for customizing update timing, retry logic, and notifications without recompiling firmware. The main `entso-e-prices.yaml` file no longer updates prices on its own—it acts as a passive sensor platform awaiting external triggers from the required automations.
 
-## Repository Structure
+## Repository Structure (v4.2.0 and v4.3.0)
 
-The repository is organized with **documentation files in the main folder** and **configuration files in the v4.2.0/ subfolder**. This keeps documentation easily accessible while separating release-specific configuration files.
+The repository is organized with **documentation files in the main folder** and **configuration files in the v4.*/ subfolder**. This keeps documentation easily accessible while separating release-specific configuration files.
 
 ```
 esp32-electricity-price-ticker/
@@ -16,14 +16,8 @@ esp32-electricity-price-ticker/
 ├── QUICKSTART.md                          # Quick start guide (in main folder)
 ├── CHANGELOG.md                           # Version history (in main folder)
 ├── PROJECT_STRUCTURE.md                   # This file (in main folder)
-├── v4.2.0/                                # Current stable release configuration files
-│   ├── entso-e-prices.yaml                # Main ESPHome configuration file (ESP-IDF)
-│   ├── secrets_template.yaml              # Template for creating secrets.yaml
-│   ├── entsoe_storage_v2.h                # NVS storage implementation for ESP-IDF
-│   ├── entsoe_http_idf.h                  # HTTP client optimized for ESP-IDF
-│   └── crucial_ha_automations/            # REQUIRED external automations for updates
-│       ├── entsoe_midnight_automation.yaml    # Midnight: NVS promote/fallback/HTTP retry
-│       └── entsoe_next_day_automation.yaml    # Next-day: 13:50 start + 30-min retries
+├── v4.2.0/                                # Old release - compilation problems after last ESPHome updates
+├── v4.3.0/                                # Current working version - stable release configuration files
 ├── entsoe-hass-compatible.yaml            # Legacy v3.5.0 configuration (Arduino framework)
 ├── LICENSE                                # MIT license file
 ├── .gitignore                             # Git ignore rules
@@ -31,22 +25,99 @@ esp32-electricity-price-ticker/
     └── v4.2.0 Wiki Home Page.md           # Wiki home page for v4.2.0
 ```
 
-## v4.2.0 Configuration Subfolder
+## v4.3.0 Configuration Subfolder
 
-The v4.2.0 release configuration files are located directly in the `v4.2.0/` subfolder:
+The v4.3.0 release configuration files are located directly in the `v4.3.0/` subfolder:
 
 ```
-v4.2.0/
-├── entso-e-prices.yaml                    # Main ESPHome configuration file
-├── secrets_template.yaml                  # Template for creating secrets.yaml
-├── entsoe_storage_v2.h                    # NVS storage implementation
-├── entsoe_http_idf.h                      # HTTP client implementation
+v4.3.0/
+├── entso-e-prices_v4.3.0.yaml             # Main ESPHome configuration file
+├── secrets_template.yaml                  # Template for creating secrets.yaml (unchanged from v4.2.0)
+├── entsoe_storage_v2.h                    # NVS storage implementation (unchanged from v4.2.0)
+├── entsoe_http_idf.h                      # HTTP client implementation  (**updated includes for ESP-IDF component paths**)
 └── crucial_ha_automations/                # CRITICAL: Required automations folder
-    ├── entsoe_midnight_automation.yaml    # Midnight automation (REQUIRED)
-    └── entsoe_next_day_automation.yaml    # Next-day automation (REQUIRED)
+    ├── entsoe_midnight_automation.yaml    # Midnight automation (REQUIRED) (unchanged from v4.2.0)
+    └── entsoe_next_day_automation.yaml    # Next-day automation (REQUIRED)  (same logic, fixed wrong JSON sensor name)
 ```
 
 **Note:** Documentation files (README.md, QUICKSTART.md, CHANGELOG.md, PROJECT_STRUCTURE.md) remain in the main folder for easy access. Only configuration-specific files are in the v4.2.0/ subfolder.
+
+## v4.2.0 vs v4.3.0: compilation and platform changes
+
+### Problem: v4.2.0 may not compile on newer ESPHome / ESP-IDF platforms
+Some newer ESPHome builds (notably when the underlying PlatformIO platform is pioarduino’s ESP-IDF toolchain) can fail to locate IDF headers unless the IDF components are explicitly included.
+
+Typical error:
+
+- `fatal error: esp_http_client/esp_http_client.h: No such file or directory`
+
+### v4.3.0 Fixes
+
+#### A) Main YAML change (ESP-IDF advanced option)
+v4.3.0 requires / recommends:
+
+```yaml
+esp32:
+  framework:
+    type: esp-idf
+    advanced:
+      include_builtin_idf_components:
+        - esp_http_client
+        - esp-tls
+        - mbedtls
+        - esp_crt_bundle
+```
+
+This ensures ESP-IDF built-in component headers and libs are visible.
+
+#### B) Helper header change (`entsoe_http_idf.h`)
+ESP-IDF headers must be included using their component path:
+
+```cpp
+#include "esp_http_client/esp_http_client.h"
+#include "esp_crt_bundle.h"
+#include "esp_log.h"
+```
+
+---
+
+## v4.3.0: 15-minute JSON sensors
+
+### Why these exist
+- The device internally works with 96 values/day (15-minute resolution).
+- Users often want the full day exported as JSON.
+- HA frequently rejects long string states (~680 chars), leading to `unknown`.
+
+### Implementation in v4.3.0
+The 96-point JSON is chunked into 3 sensors (P1, P2, P3) for today and tomorrow to stay under HA’s typical state limits.
+
+Today:
+- `json_15min_prices_kwh_p1` (0–31)
+- `json_15min_prices_kwh_p2` (32–63)
+- `json_15min_prices_kwh_p3` (64–95)
+
+Tomorrow:
+- `json_next_day_15min_prices_kwh_p1` (0–31)
+- `json_next_day_15min_prices_kwh_p2` (32–63)
+- `json_next_day_15min_prices_kwh_p3` (64–95)
+
+---
+
+## HA template sensor to combine P1/P2/P3 (optional)
+
+```yaml
+template:
+  - sensor:
+      - name: "ENTSO-E 15-min Prices JSON (Today, combined)"
+        unique_id: entsoe_15min_prices_json_today_combined
+        state: >-
+          {{ states('text_sensor.entso_e_prices_json_15min_prices_kwh_p1')
+             ~ states('text_sensor.entso_e_prices_json_15min_prices_kwh_p2')
+             ~ states('text_sensor.entso_e_prices_json_15min_prices_kwh_p3') }}
+```
+
+> Note: depending on HA limits, the combined sensor may still show `unknown`. Using P1/P2/P3 directly is the most robust.
+
 
 ## File Descriptions
 
@@ -89,7 +160,7 @@ v4.2.0/
 - **Contains**:
   - Version releases with dates
   - Added features and improvements
-  - Migration notes from v3.5.0 to v4.2.0
+  - Migration notes 
   - Reboot issue resolution details
   - External automation documentation
   - Contribution guidelines
@@ -105,9 +176,9 @@ v4.2.0/
   - Integration points
   - Support resources
 
-### Core Configuration Files (v4.2.0/ Subfolder)
+### Core Configuration Files (v4.3.0/ Subfolder)
 
-#### v4.2.0/entso-e-prices.yaml
+#### v4.3.0/entso-e-prices.yaml
 
 - **Purpose**: Main ESPHome configuration file using ESP-IDF framework
 - **Location**: `v4.2.0/` subfolder
@@ -120,7 +191,7 @@ v4.2.0/
   - HTTP client for ENTSO-E API
   - NVS storage configuration for persistent data
   - Fallback AP configuration
-- **Usage**: Download from `v4.2.0/` folder and upload to ESPHome dashboard
+- **Usage**: Download from `v4.3.0/` folder and upload to ESPHome dashboard
 - **Note**: Requires ESP-IDF framework (not Arduino) for full functionality
 - **Important**: No manual editing required - all credentials are in secrets.yaml
 - **Critical**: Does NOT update on its own - requires external automations
@@ -128,7 +199,7 @@ v4.2.0/
 #### v4.2.0/secrets_template.yaml
 
 - **Purpose**: Template for sensitive configuration values
-- **Location**: `v4.2.0/` subfolder
+- **Location**: `v4.3.0/` subfolder
 - **Contains**:
   - WiFi credentials (SSID and password)
   - Home Assistant API encryption key
@@ -143,9 +214,9 @@ v4.2.0/
 - **Purpose**: User-provided file containing sensitive configuration
 - **Location**: Your ESPHome project directory
 - **Contains**:
-  - All sensitive credentials referenced by `entso-e-prices.yaml`
+  - All sensitive credentials referenced by `entso-e-prices_v4.3.0.yaml`
   - Environment-specific settings
-- **Usage**: Created by copying `v4.2.0/secrets_template.yaml` and customizing values
+- **Usage**: Created by copying `v4.3.0/secrets_template.yaml` and customizing values
 - **Important**: Never commit this file to version control
 
 ### C++ Helper Files (v4.2.0/ Subfolder)
@@ -153,36 +224,36 @@ v4.2.0/
 #### v4.2.0/entsoe_storage_v2.h
 
 - **Purpose**: NVS (Non-Volatile Storage) implementation for ESP-IDF
-- **Location**: `v4.2.0/` subfolder
+- **Location**: `v4.3.0/` subfolder
 - **Contains**:
   - Functions for storing and retrieving price data in flash memory
   - Persistent storage across power cycles
   - Data validation and integrity checks
-- **Integration**: Automatically included by `entso-e-prices.yaml`
+- **Integration**: Automatically included by `entso-e-prices_v4.3.0.yaml`
 - **Note**: Specific to ESP-IDF framework, provides reliable data persistence
 
-#### v4.2.0/entsoe_http_idf.h
+#### v4.3.0/entsoe_http_idf.h
 
 - **Purpose**: Optimized HTTP client implementation for ESP-IDF framework
-- **Location**: `v4.2.0/` subfolder
+- **Location**: `v4.3.0/` subfolder
 - **Contains**:
   - ENTSO-E API communication routines
   - XML parsing utilities
   - Error handling and retry logic
   - Connection management
-- **Integration**: Automatically included by `entso-e-prices.yaml`
+- **Integration**: Automatically included by `entso-e-prices_v4.3.0.yaml`
 - **Note**: Replaces Arduino-based HTTP client with ESP-IDF native implementation
 
-### Essential Home Assistant Automations (v4.2.0/crucial_ha_automations/)
+### Essential Home Assistant Automations (v4.3.0/crucial_ha_automations/)
 
-> **⚠️ CRITICAL: THESE AUTOMATIONS ARE REQUIRED FOR V4.2.0**
+> **⚠️ CRITICAL: THESE AUTOMATIONS ARE REQUIRED FOR V4.3.0**
 >
 > The main YAML file no longer updates on its own. Without importing these automations, your prices will never update.
 
-#### v4.2.0/crucial_ha_automations/entsoe_midnight_automation.yaml
+#### v4.3.0/crucial_ha_automations/entsoe_midnight_automation.yaml
 
 - **Purpose**: Handles midnight transition and today's price update
-- **Location**: `v4.2.0/crucial_ha_automations/` subfolder
+- **Location**: `v4.3.0/crucial_ha_automations/` subfolder
 - **Trigger**: At 00:00:00 (midnight)
 - **Actions**:
   1. **NVS Promote**: Attempts to promote tomorrow's prices from NVS (tomorrow96 → today96)
@@ -201,7 +272,7 @@ v4.2.0/
 #### v4.2.0/crucial_ha_automations/entsoe_next_day_automation.yaml
 
 - **Purpose**: Handles fetching tomorrow's prices with intelligent retry logic
-- **Location**: `v4.2.0/crucial_ha_automations/` subfolder
+- **Location**: `v4.3.0/crucial_ha_automations/` subfolder
 - **Trigger**: At 13:50:00 (13 minutes before standard 14:00 publish time)
 - **Actions**:
   1. **Initial Trigger**: Presses force next day update button immediately
@@ -217,7 +288,7 @@ v4.2.0/
 
 ### Why External Automations
 
-The v4.2.0 architecture moves all scheduling to Home Assistant automations for several key benefits:
+The v4.3.0 architecture moves all scheduling to Home Assistant automations for several key benefits:
 
 1. **Flexibility**: Modify update timing without recompiling firmware. Change the 13:50 start time to whenever suits your needs.
 
@@ -262,7 +333,7 @@ The v4.2.0 architecture moves all scheduling to Home Assistant automations for s
 
 ### Wiki Documentation
 
-#### Wiki/v4.2.0 Wiki Home Page.md
+#### Wiki/v4.3.0 Wiki Home Page.md
 
 - **Purpose**: Wiki home page with quick links and navigation
 - **Location**: `Wiki/` folder
@@ -281,13 +352,13 @@ The v4.2.0 architecture moves all scheduling to Home Assistant automations for s
 
 1. **Read** `QUICKSTART.md` in main folder for immediate setup
 2. **Follow** `README.md` in main folder for detailed configuration
-3. **Navigate** to `v4.2.0/` folder in repository
-4. **Download** `entso-e-prices.yaml` from `v4.2.0/`
-5. **Download** `secrets_template.yaml` from `v4.2.0/`
+3. **Navigate** to `v4.3.0/` folder in repository
+4. **Download** `entso-e-prices_v4.3.0.yaml` from `v4.3.0/`
+5. **Download** `secrets_template.yaml` from `v4.3.0/`
 6. **Copy** `secrets_template.yaml` to `secrets.yaml` and fill in all values
-7. **Download** both C++ helper files from `v4.2.0/`
-8. **Place** C++ helper files alongside `entso-e-prices.yaml` in your ESPHome project
-9. **Navigate** to `v4.2.0/crucial_ha_automations/` folder
+7. **Download** both C++ helper files from `v4.3.0/`
+8. **Place** C++ helper files alongside `entso-e-prices_v4.3.0.yaml` in your ESPHome project
+9. **Navigate** to `v4.3.0/crucial_ha_automations/` folder
 10. **Download** `entsoe_midnight_automation.yaml`
 11. **Download** `entsoe_next_day_automation.yaml`
 12. **Import** both automation files into Home Assistant
@@ -302,14 +373,14 @@ The v4.2.0 architecture moves all scheduling to Home Assistant automations for s
 3. **Follow** `.gitignore` rules for contributions
 4. **Use** project structure for organization
 5. **Ensure** changes maintain ESP-IDF compatibility
-6. **Test** both v4.2.0 (ESP-IDF) and legacy versions if needed
+6. **Test** both v4.3.0 (ESP-IDF) and legacy versions if needed
 7. **Document** any changes to automation requirements
 
 ## Configuration Overview
 
 ### All Credentials in secrets.yaml
 
-**Important:** v4.2.0 is different from v3.5.0. In v4.2.0, **ALL credentials are stored in secrets.yaml** - nothing is hardcoded in the YAML file. The main YAML file (`entso-e-prices.yaml`) uses `!secret` directives to reference all configurable values.
+**Important:** v4.2.0+ is different from v3.5.0. In v4.2.0+, **ALL credentials are stored in secrets.yaml** - nothing is hardcoded in the YAML file. The main YAML file (`entso-e-prices.yaml`) uses `!secret` directives to reference all configurable values.
 
 **YAML File Structure:**
 ```yaml
@@ -343,7 +414,7 @@ api:
 
 ### External Automation Architecture
 
-**Critical Change:** v4.2.0 removes internal scheduling from the YAML file. All update triggering is now handled by external Home Assistant automations.
+**Critical Change:** v4.2.0+ removes internal scheduling from the YAML file. All update triggering is now handled by external Home Assistant automations.
 
 **What This Means:**
 
@@ -371,14 +442,14 @@ api:
   - Midnight automation: Handles today's price update at midnight
   - Next-day automation: Handles tomorrow's price update starting at 13:50
 
-## What is New in v4.2.0
+## What is New in v4.2.0+
 
 ### External Automations (REQUIRED)
 
 v4.2.0 introduces a fundamental architectural change where all scheduling logic has been moved to external Home Assistant automations. This provides maximum flexibility for customizing update timing, retry logic, and notifications without recompiling firmware.
 
 **Previous (v3.5.0):** YAML file contained internal `on_time` triggers for automatic updates
-**Current (v4.2.0):** YAML file is passive, requires external automations for updates
+**Newer (v4.2.0+):** YAML file is passive, requires external automations for updates
 
 **Benefits:**
 - Modify update timing without recompiling firmware
@@ -388,7 +459,7 @@ v4.2.0 introduces a fundamental architectural change where all scheduling logic 
 - No firmware changes for behavior modifications
 
 **Requirements:**
-- Download both automation files from `v4.2.0/crucial_ha_automations/`
+- Download both automation files from `v4.3.0/crucial_ha_automations/`
 - Import into Home Assistant (Settings → Automations → Import from file)
 - Enable both automations
 - Configure mobile notification entity
@@ -397,8 +468,8 @@ v4.2.0 introduces a fundamental architectural change where all scheduling logic 
 ### All Credentials in secrets.yaml
 
 - **Previous (v3.5.0)**: Some credentials were hardcoded in YAML and had to be edited manually
-- **Current (v4.2.0)**: ALL credentials are in secrets.yaml using `!secret` directives
-- **No YAML editing required**: Download `entso-e-prices.yaml` and it works immediately once secrets.yaml is configured
+- **Newer (v4.2.0+)**: ALL credentials are in secrets.yaml using `!secret` directives
+- **No YAML editing required**: Download `entso-e-prices_v4.3.0.yaml` and it works immediately once secrets.yaml is configured
 
 ### Framework Migration (Arduino to ESP-IDF)
 
@@ -517,17 +588,17 @@ v4.2.0 introduces a fundamental architectural change where all scheduling logic 
 
 ## Directory Structure for Your ESPHome Project
 
-When setting up v4.2.0, place the helper files **directly alongside** the main YAML file in your ESPHome project. ESPHome automatically includes `.cpp` and `.h` files from the same directory as your configuration file:
+When setting up v4.3.0, place the helper files **directly alongside** the main YAML file in your ESPHome project. ESPHome automatically includes `.cpp` and `.h` files from the same directory as your configuration file:
 
 ```
 your-esphome-project/
-├── entso-e-prices.yaml              # Main configuration (from v4.2.0/)
-├── entsoe_storage_v2.h              # NVS storage helper (from v4.2.0/)
-├── entsoe_http_idf.h                # HTTP client helper (from v4.2.0/)
-└── secrets.yaml                     # Your credentials (from v4.2.0/secrets_template.yaml)
+├── entso-e-prices.yaml              # Main configuration (from v4.3.0/)
+├── entsoe_storage_v2.h              # NVS storage helper (from v4.3.0/)
+├── entsoe_http_idf.h                # HTTP client helper (from v4.3.0/)
+└── secrets.yaml                     # Your credentials (from v4.3.0/secrets_template.yaml)
 ```
 
-**Important:** Place both `.h` helper files in the **same folder** as `entso-e-prices.yaml`, NOT in a `src/` subfolder. ESPHome automatically includes all `.h` and `.cpp` files from the configuration directory.
+**Important:** Place both `.h` helper files in the **same folder** as `entso-e-prices_v4.3.0.yaml`, NOT in a `src/` subfolder. ESPHome automatically includes all `.h` and `.cpp` files from the configuration directory.
 
 **Automation files are imported into Home Assistant, not placed in this directory.**
 
@@ -542,18 +613,18 @@ Access these files directly in the main repository folder:
 - **CHANGELOG.md**: https://github.com/Legolas-2025/esp32-electricity-price-ticker/blob/main/CHANGELOG.md
 - **PROJECT_STRUCTURE.md**: https://github.com/Legolas-2025/esp32-electricity-price-ticker/blob/main/PROJECT_STRUCTURE.md
 
-### v4.2.0 Configuration Files
+### v4.3.0 Configuration Files
 
-Navigate to the `v4.2.0/` folder to download configuration files:
+Navigate to the `v4.3.0/` folder to download configuration files:
 
 - **entso-e-prices.yaml**: https://github.com/Legolas-2025/esp32-electricity-price-ticker/blob/main/v4.2.0/entso-e-prices.yaml
 - **secrets_template.yaml**: https://github.com/Legolas-2025/esp32-electricity-price-ticker/blob/main/v4.2.0/secrets_template.yaml
 - **entsoe_storage_v2.h**: https://github.com/Legolas-2025/esp32-electricity-price-ticker/blob/main/v4.2.0/entsoe_storage_v2.h
 - **entsoe_http_idf.h**: https://github.com/Legolas-2025/esp32-electricity-price-ticker/blob/main/v4.2.0/entsoe_http_idf.h
 
-### v4.2.0 Essential Automations (REQUIRED)
+### v4.3.0 Essential Automations (REQUIRED)
 
-Navigate to the `v4.2.0/crucial_ha_automations/` folder to download required automations:
+Navigate to the `v4.3.0/crucial_ha_automations/` folder to download required automations:
 
 - **entsoe_midnight_automation.yaml**: https://github.com/Legolas-2025/esp32-electricity-price-ticker/blob/main/v4.2.0/crucial_ha_automations/entsoe_midnight_automation.yaml
 - **entsoe_next_day_automation.yaml**: https://github.com/Legolas-2025/esp32-electricity-price-ticker/blob/main/v4.2.0/crucial_ha_automations/entsoe_next_day_automation.yaml
@@ -565,11 +636,11 @@ If you are upgrading from v3.5.0:
 1. **All Credentials Now in secrets.yaml**: Unlike v3.5.0 where some values were hardcoded in YAML, v4.2.0 puts everything in secrets.yaml
 2. **Update Framework**: Change from Arduino to ESP-IDF in ESPHome dashboard
 3. **Add Helper Files**: Place `entsoe_storage_v2.h` and `entsoe_http_idf.h` alongside your YAML file
-4. **Update Configuration**: Use `entso-e-prices.yaml` from v4.2.0 instead of `entsoe-hass-compatible.yaml`
-5. **Create New secrets.yaml**: Copy `secrets_template.yaml` from v4.2.0 and fill in all values
+4. **Update Configuration**: Use `entso-e-prices_v4.3.0.yaml` from v4.3.0 instead of `entsoe-hass-compatible.yaml`
+5. **Create New secrets.yaml**: Copy `secrets_template.yaml` from v4.3.0 and fill in all values
 6. **Clean Build**: Delete old `.esphome` build directory before compiling
 7. **Select ESP-IDF**: Choose ESP-IDF framework when prompted by ESPHome
-8. **Import Automations**: Download and import both automations from `v4.2.0/crucial_ha_automations/`
+8. **Import Automations**: Download and import both automations from `v4.3.0/crucial_ha_automations/`
 9. **Configure Notifications**: Replace `notify.mobile_app_sm_s911b` with your entity
 10. **Test Persistence**: Verify NVS storage works after power cycle
 11. **Verify Automations**: Check automation traces and status sensors
@@ -580,7 +651,7 @@ If you are upgrading from v3.5.0:
 ## Support Resources
 
 - **Documentation**: Complete guides in README.md and QUICKSTART.md (main folder)
-- **Wiki**: See `Wiki/v4.2.0 Wiki Home Page.md` for wiki-based documentation
+- **Wiki**: See `Wiki/v4.3.0 Wiki Home Page.md` for wiki-based documentation
 - **Community**: ESPHome and Home Assistant forums
 - **API Support**: ENTSO-E transparency platform
 - **Hardware**: ESP32 manufacturer documentation
