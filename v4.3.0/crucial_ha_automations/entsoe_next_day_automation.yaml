@@ -63,7 +63,7 @@ actions:
                       repeat.index }}. Current status: {{
                       states('sensor.entso_e_prices_next_day_price_update_status') }}. Next day
                       price data: {{
-                      states('sensor.entso_e_prices_next_day_hourly_prices_json') }}.
+                      states('sensor.entso_e_prices_entso_e_next_day_hourly_prices_eur_kwh_json') }}.
                     notification_id: entsoe_next_day_update_retry
 
   # 4. Final check after retry loop
