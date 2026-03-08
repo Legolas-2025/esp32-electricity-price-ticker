@@ -11,13 +11,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **15-minute JSON export (96 points)** for both Today and Tomorrow.
 - **Chunked 15-minute JSON text sensors** (P1/P2/P3) to avoid Home Assistant state-length limits:
   - Today:
-    - `text_sensor.entso_e_prices_json_15min_prices_kwh_p1` (points 0–31)
-    - `text_sensor.entso_e_prices_json_15min_prices_kwh_p2` (points 32–63)
-    - `text_sensor.entso_e_prices_json_15min_prices_kwh_p3` (points 64–95)
+    - `sensor.entso_e_prices_entso_e_15_min_prices_eur_kwh_json_p1_00_00_07_45` (values 0–31)
+    - `sensor.entso_e_prices_entso_e_15_min_prices_eur_kwh_json_p2_08_00_15_45` (values 32–63)
+    - `sensor.entso_e_prices_entso_e_15_min_prices_eur_kwh_json_p3_16_00_23_45` (values 64–95)
+
   - Tomorrow:
-    - `text_sensor.entso_e_prices_json_next_day_15min_prices_kwh_p1` (points 0–31)
-    - `text_sensor.entso_e_prices_json_next_day_15min_prices_kwh_p2` (points 32–63)
-    - `text_sensor.entso_e_prices_json_next_day_15min_prices_kwh_p3` (points 64–95)
+    - `sensor.entso_e_prices_entso_e_next_day_15_min_prices_eur_kwh_json_p1_00_00_07_45` (values 0–31)
+    - `sensor.entso_e_prices_entso_e_next_day_15_min_prices_eur_kwh_json_p2_08_00_15_45` (values 32–63)
+    - `sensor.entso_e_prices_entso_e_next_day_15_min_prices_eur_kwh_json_p3_16_00_23_45` (values 64–95)
 
 ### ⚠️ Changed
 #### Build / toolchain compatibility (ESPHome 2026.x, ESP-IDF, pioarduino platform)
