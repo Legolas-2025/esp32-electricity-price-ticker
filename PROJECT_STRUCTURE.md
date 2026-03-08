@@ -92,31 +92,18 @@ ESP-IDF headers must be included using their component path:
 The 96-point JSON is chunked into 3 sensors (P1, P2, P3) for today and tomorrow to stay under HA’s typical state limits.
 
 Today:
-- `json_15min_prices_kwh_p1` (0–31)
-- `json_15min_prices_kwh_p2` (32–63)
-- `json_15min_prices_kwh_p3` (64–95)
+- `sensor.entso_e_prices_entso_e_15_min_prices_eur_kwh_json_p1_00_00_07_45` (values 0–31)
+- `sensor.entso_e_prices_entso_e_15_min_prices_eur_kwh_json_p2_08_00_15_45` (values 32–63)
+- `sensor.entso_e_prices_entso_e_15_min_prices_eur_kwh_json_p3_16_00_23_45` (values 64–95)
 
 Tomorrow:
-- `json_next_day_15min_prices_kwh_p1` (0–31)
-- `json_next_day_15min_prices_kwh_p2` (32–63)
-- `json_next_day_15min_prices_kwh_p3` (64–95)
+- `sensor.entso_e_prices_entso_e_next_day_15_min_prices_eur_kwh_json_p1_00_00_07_45` (values 0–31)
+- `sensor.entso_e_prices_entso_e_next_day_15_min_prices_eur_kwh_json_p2_08_00_15_45` (values 32–63)
+- `sensor.entso_e_prices_entso_e_next_day_15_min_prices_eur_kwh_json_p3_16_00_23_45` (values 64–95)
 
 ---
-
-## HA template sensor to combine P1/P2/P3 (optional)
-
-```yaml
-template:
-  - sensor:
-      - name: "ENTSO-E 15-min Prices JSON (Today, combined)"
-        unique_id: entsoe_15min_prices_json_today_combined
-        state: >-
-          {{ states('text_sensor.entso_e_prices_json_15min_prices_kwh_p1')
-             ~ states('text_sensor.entso_e_prices_json_15min_prices_kwh_p2')
-             ~ states('text_sensor.entso_e_prices_json_15min_prices_kwh_p3') }}
+> Note: because of the HA limits, the combined template sensor will show `unknown`. Using P1/P2/P3 directly is the most robust.
 ```
-
-> Note: depending on HA limits, the combined sensor may still show `unknown`. Using P1/P2/P3 directly is the most robust.
 
 
 ## File Descriptions
