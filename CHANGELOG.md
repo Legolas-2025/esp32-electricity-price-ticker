@@ -3,6 +3,78 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+# Changelog
+
+## [4.3.0] - 2026-03-08
+
+### Added
+- **15-minute JSON export (96 points)** for both Today and Tomorrow.
+- **Chunked 15-minute JSON text sensors** (P1/P2/P3) to avoid Home Assistant state-length limits:
+  - Today:
+    - `text_sensor.entso_e_prices_json_15min_prices_kwh_p1` (points 0–31)
+    - `text_sensor.entso_e_prices_json_15min_prices_kwh_p2` (points 32–63)
+    - `text_sensor.entso_e_prices_json_15min_prices_kwh_p3` (points 64–95)
+  - Tomorrow:
+    - `text_sensor.entso_e_prices_json_next_day_15min_prices_kwh_p1` (points 0–31)
+    - `text_sensor.entso_e_prices_json_next_day_15min_prices_kwh_p2` (points 32–63)
+    - `text_sensor.entso_e_prices_json_next_day_15min_prices_kwh_p3` (points 64–95)
+
+### ⚠️ Changed
+#### Build / toolchain compatibility (ESPHome 2026.x, ESP-IDF, pioarduino platform)
+Some newer ESPHome + ESP-IDF builds (especially when ESPHome uses the **pioarduino** `platform-espressif32` ESP-IDF toolchain) may **not expose ESP-IDF built-in component headers by default**.  
+This can break compilation of helper headers that include IDF networking components.
+
+Typical failure:
+- `fatal error: esp_http_client/esp_http_client.h: No such file or directory`
+
+To make builds deterministic across platforms, v4.3.0 introduces two changes:
+
+1) **Main YAML now explicitly enables required ESP-IDF built-in components**
+```yaml
+esp32:
+  framework:
+    type: esp-idf
+    advanced:
+      include_builtin_idf_components:
+        - esp_http_client
+        - esp-tls
+        - mbedtls
+        - esp_crt_bundle
+```
+
+**Reason:**  
+These components provide the headers + linkable libraries for:
+- `esp_http_client` (HTTPS client)
+- `esp-tls` / `mbedtls` (TLS stack)
+- `esp_crt_bundle` (root CA bundle attachment via `esp_crt_bundle_attach`)
+
+Without explicitly including them, some toolchains can compile ESPHome core but fail when a custom helper header tries to include/use those components.
+
+2) **Helper file update: `entsoe_http_idf.h` include path + IDF logging**
+- Updated the HTTP helper to include ESP-IDF headers in a way that works reliably with component-based builds:
+  - from (older style):
+    - `#include "esp_http_client.h"`
+  - to (component path style):
+    - `#include "esp_http_client/esp_http_client.h"`
+- Kept/ensured certificate bundle include:
+  - `#include "esp_crt_bundle.h"`
+- (If logging needed by the build/toolchain) ensured IDF logging header usage is consistent:
+  - `#include "esp_log.h"` (or relies on ESPHome logging headers where appropriate)
+
+**Reason:**  
+On certain ESP-IDF layouts, `esp_http_client.h` is not at the global include root; it is under the component include directory. Using the explicit component path avoids include-resolution differences between platforms and IDF versions.
+
+### Fixed
+- **v4.2.0 compilation regressions** on newer ESPHome/ESP-IDF toolchains related to missing `esp_http_client` headers by:
+  - explicitly enabling built-in IDF components in YAML, and
+  - updating `entsoe_http_idf.h` to use the correct include paths.
+- **Home Assistant “unknown” state** for long 15-minute JSON strings by splitting into P1/P2/P3 sensors.
+
+### Migration Notes (v4.2.0 -> v4.3.0)
+- Existing HA automations remain compatible (same ESPHome API actions + status sensors).
+- If you used a single long 15-minute JSON sensor: switch to P1/P2/P3 (recommended). You *can* concatenate them in HA, but HA may still reject long states depending on entity/state limits.
+
+
 ## [4.2.0] - 2026-02-01
 ### ⚠️ CRITICAL: External Home Assistant Automations Required
 **VERSION 4.2.0 INTRODUCES A FUNDAMENTAL ARCHITECTURAL CHANGE:** The main `entso-e-prices.yaml` file no longer performs automatic updates on its own. Instead, v4.2.0 relies on **two external Home Assistant automations** that you MUST import from the `v4.2.0/crucial_ha_automations/` folder. Without these automations, your prices will never update.
