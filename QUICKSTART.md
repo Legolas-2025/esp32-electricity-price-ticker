@@ -56,39 +56,19 @@ A complete 96-point JSON string is often ~680 characters. Home Assistant frequen
 
 ### New sensors
 Today:
-- `text_sensor.entso_e_prices_json_15min_prices_kwh_p1`
-- `text_sensor.entso_e_prices_json_15min_prices_kwh_p2`
-- `text_sensor.entso_e_prices_json_15min_prices_kwh_p3`
+- `sensor.entso_e_prices_entso_e_15_min_prices_eur_kwh_json_p1_00_00_07_45` (values 0–31)
+- `sensor.entso_e_prices_entso_e_15_min_prices_eur_kwh_json_p2_08_00_15_45` (values 32–63)
+- `sensor.entso_e_prices_entso_e_15_min_prices_eur_kwh_json_p3_16_00_23_45` (values 64–95)
+
 
 Tomorrow:
-- `text_sensor.entso_e_prices_json_next_day_15min_prices_kwh_p1`
-- `text_sensor.entso_e_prices_json_next_day_15min_prices_kwh_p2`
-- `text_sensor.entso_e_prices_json_next_day_15min_prices_kwh_p3`
+- `sensor.entso_e_prices_entso_e_next_day_15_min_prices_eur_kwh_json_p1_00_00_07_45` (values 0–31)
+- `sensor.entso_e_prices_entso_e_next_day_15_min_prices_eur_kwh_json_p2_08_00_15_45` (values 32–63)
+- `sensor.entso_e_prices_entso_e_next_day_15_min_prices_eur_kwh_json_p3_16_00_23_45` (values 64–95)
 
 ---
-
-## Home Assistant: combine P1/P2/P3 into one template sensor (optional)
-
-Add to Home Assistant:
-
-```yaml
-template:
-  - sensor:
-      - name: "ENTSO-E 15-min Prices JSON (Today, combined)"
-        unique_id: entsoe_15min_prices_json_today_combined
-        state: >-
-          {% set p1 = states('text_sensor.entso_e_prices_json_15min_prices_kwh_p1') %}
-          {% set p2 = states('text_sensor.entso_e_prices_json_15min_prices_kwh_p2') %}
-          {% set p3 = states('text_sensor.entso_e_prices_json_15min_prices_kwh_p3') %}
-          {% if p1 in ['unknown','unavailable',''] or p2 in ['unknown','unavailable',''] or p3 in ['unknown','unavailable',''] %}
-            unknown
-          {% else %}
-            {{ p1 ~ p2 ~ p3 }}
-          {% endif %}
-```
-
-> Warning: the combined state may still be too long for HA. The recommended approach is to consume P1/P2/P3 directly.
-
+> Warning: dom not try to combine P1/P2/P3 into one template sensor, it will be too long for HA. The recommended approach is to consume P1/P2/P3 directly. 
+---
 
 ## ⚠️ CRITICAL: External Automations Required
 
