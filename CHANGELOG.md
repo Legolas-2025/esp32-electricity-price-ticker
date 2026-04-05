@@ -5,6 +5,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 # Changelog
 
+## [4.3.1] - 2026-04-04
+
+(ESPHome 2026.2.4) - P1/P2/P3 "unknown" issue with negative spot prices
+
+## IMPORTANT NOTE - THIS IS THE LAST VERSION: 
+
+This will be the last Version update of ENTSO-E Prices, I am already developing a new HA ESPHome EPrices project which switches data source from ENTSO-E API (which requires acquiring a dedicated token) to public API https://api.energy-charts.info/. No more external automations will be necessary for conducting data API fetch, only one external eprices_nvs.h helper file will remain. I will provide comprehensive sensor migration instructions from entso-e-prices.yaml v4.3.1 to eprices.yaml v1.0.   
+
+### BUG (v4.3.1):  
+- On days with negative spot prices (e.g. high solar generation midday), the 15-minute sensors can contain many negative values formatted as "%.4f" (e.g. -0.0574), each consuming 7 characters instead of the usual 6 for positive values. With 32 values this pushes the JSON string just over the 255-character HA state limit, causing HA to drop the state and show "unknown".
+
+### FIX: 
+- negative prices are formatted as "%.3f" (3 decimal places, e.g. -0.057) and positive prices keep "%.4f" (4 decimal places). This saves up to 32 characters in worst case, keeping all chunks safely within the 255-character limit. Precision loss is at most 0.0001 €/kWh (0.01 cent), which is negligible for all practical purposes.
+ - The hourly JSON sensors (24 values) are not affected and retain "%.4f" throughout.
+
 ## [4.3.0] - 2026-03-08
 
 ### Added
