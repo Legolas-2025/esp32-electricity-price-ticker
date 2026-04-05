@@ -10,7 +10,11 @@
 
 Inspired by the [hass-entso-e project](https://github.com/JaccoR/hass-entso-e). For detailed documentation, FAQ and troubleshooting, visit our [Wiki Home Page](https://github.com/Legolas-2025/esp32-electricity-price-ticker/wiki/Home).
 
-> **Current Stable Version: v4.3.0**
+
+## ⚠️ The latest v4.3.1 is addresing P1/P2/P3 "unknown" issue with negative spot price. This will be the last version update of this project, I am focusing on developing a new EPrices public API project. See CHANGELOG for more info.
+
+
+> **Previous Stable Version: v4.3.0**
 > 
 > v4.2.0 inroduced a **major architectural release** that moves all scheduling logic to external Home Assistant automations for maximum flexibility and control.
 > **CRITICAL REQUIREMENT**: v4.3.0 requires two external Home Assistant automations from the `v4.3.0/crucial_ha_automations/` folder. Without these automations, your prices will never update.
