@@ -10,9 +10,15 @@
 
 Inspired by the [hass-entso-e project](https://github.com/JaccoR/hass-entso-e). For detailed documentation, FAQ and troubleshooting, visit our [Wiki Home Page](https://github.com/Legolas-2025/esp32-electricity-price-ticker/wiki/Home).
 
+# ⚠️ 2026-04-04 THIS PROJECT HAS BEEN DISCONTINUED
+## I created a similar upgraded version called EPrices. 
+It is available In this [EPrices Repository](https://github.com/Legolas-2025/EPrices). 
+There you can also find migration instructions: [ENTSO-E-PRICES-MIGRATION.md](https://github.com/Legolas-2025/EPrices/blob/main/ENTSO-E-PRICES-MIGRATION.md)
 
-## ⚠️ The latest v4.3.1 is addresing P1/P2/P3 "unknown" issue with negative spot price. This will be the last version update of this project, I am focusing on developing a new EPrices public API project. See CHANGELOG for more info.
+---
 
+### This project's last release v4.3.1 is addresing P1/P2/P3 "unknown" issue with negative spot price 
+(See CHANGELOG for details)
 
 > **Previous Stable Version: v4.3.0**
 > 
